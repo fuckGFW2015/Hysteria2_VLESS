@@ -43,11 +43,11 @@ enable_bbr() {
     echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
 
-    # 验证
+    # 🔥【关键】验证是否真正生效，并给出友好提示
     if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q 'bbr'; then
         success "BBR 已成功启用"
     else
-        warn "BBR 启用失败（可能系统不支持）"
+        warn "BBR 启用失败（可能系统不支持或需重启生效）"
     fi
 }
 
@@ -68,17 +68,42 @@ install_deps() {
 open_ports() {
     local ports=("$@")
     info "配置系统防火墙策略..."
+    local handled=false
+
     for port in "${ports[@]}"; do
+        # UFW
         if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-            ufw allow "$port"/tcp >/dev/null && ufw allow "$port"/udp >/dev/null
+            ufw allow "$port"/tcp >/dev/null 2>&1
+            ufw allow "$port"/udp >/dev/null 2>&1
             echo -e "  - UFW 已放行端口: $port"
+            handled=true
+        # Firewalld
         elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
-            firewall-cmd --permanent --add-port="$port"/tcp >/dev/null
-            firewall-cmd --permanent --add-port="$port"/udp >/dev/null
-            firewall-cmd --reload >/dev/null
+            firewall-cmd --permanent --add-port="$port"/{tcp,udp} >/dev/null 2>&1
+            firewall-cmd --reload >/dev/null 2>&1
             echo -e "  - Firewalld 已放行端口: $port"
+            handled=true
         fi
     done
+
+    # 如果没用高级防火墙，回退到 iptables
+    if ! $handled; then
+        for port in "${ports[@]}"; do
+            iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
+                iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
+            iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null || \
+                iptables -I INPUT -p udp --dport "$port" -j ACCEPT
+            echo -e "  - iptables 已放行端口: $port"
+        done
+        # 可选：保存规则（兼容不同发行版）
+        if command -v iptables-save &>/dev/null; then
+            if command -v apt &>/dev/null; then
+                apt install -y iptables-persistent 2>/dev/null && netfilter-persistent save
+            elif command -v dnf &>/dev/null; then
+                dnf install -y iptables-services 2>/dev/null && service iptables save
+            fi
+        fi
+    fi
 }
 
 # --- 3. 下载官方 Beta 核心 ---
