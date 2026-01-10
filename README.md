@@ -130,6 +130,10 @@ sed -i '/net\.ipv4\.tcp_congestion_control.*bbr/d' /etc/sysctl.conf
 sysctl -p
 
 ```
-
-
+## 完全卸载整个 Sing-Box（包括 Hysteria2 + REALITY）
+* 重复第一步，直接使用脚本自带的 卸载功能：
+  在脚本菜单中选择：
+  ```
+  6. 卸载 Sing-box
+```
 。
