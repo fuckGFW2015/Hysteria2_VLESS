@@ -249,6 +249,8 @@ if [[ "$MODE" == "all" || "$MODE" == "reality" ]]; then
     qrencode -t ANSIUTF8 "$link"
 fi
 
+# 🔥【新增】云平台安全组提醒（放在这里！）
+    echo -e "\n${YELLOW}⚠️  请确保云服务器安全组已放行端口: ${HY2_P}(TCP/UDP), ${REL_P}(TCP)${NC}"
 }
 
 main_menu() {
