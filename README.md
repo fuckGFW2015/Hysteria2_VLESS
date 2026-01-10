@@ -74,19 +74,11 @@
 
 ## 使用方法
 
-### 1. 下载并运行脚本
-
+### 1. 下载并运行脚本(或者再次运行脚本)
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/fuckGFW2015/Hysteria2_VLESS/refs/heads/main/Hy2_Vless.sh)
 ```
-
-### 2. 再次运行脚本
-
-```bash
-sudo bash Hy2_Vless.sh
-```
-
 脚本将以 root 权限运行，并显示主菜单。
 
 ### 3. 菜单选项说明
