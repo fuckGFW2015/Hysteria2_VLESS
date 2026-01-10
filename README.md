@@ -106,7 +106,30 @@ Hysteria2 端口 (默认8443): 回车键，直接默认
 
 Reality 端口 (默认443): 2096
 
+## 验证BBR是否开启
+```
+sysctl net.ipv4.tcp_congestion_control | grep -i bbr
 
+或
+
+cat /proc/sys/net/ipv4/tcp_congestion_control
+
+```
+## 禁用 BBR 命令
+
+```
+# 1. 临时禁用（立即生效）
+sysctl -w net.ipv4.tcp_congestion_control=cubic
+sysctl -w net.core.default_qdisc=pfifo_fast
+
+# 2. 永久移除 BBR 配置（防止重启后自动启用）
+sed -i '/net\.core\.default_qdisc.*fq/d' /etc/sysctl.conf
+sed -i '/net\.ipv4\.tcp_congestion_control.*bbr/d' /etc/sysctl.conf
+
+# 3. 重新加载 sysctl 配置
+sysctl -p
+
+```
 
 
 。
