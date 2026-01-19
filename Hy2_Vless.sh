@@ -169,13 +169,13 @@ generate_config() {
         openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/private.key"
         openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/private.key" \
             -out "$CERT_DIR/cert.pem" -subj "/CN=$sni_domain"
-        hy2_in=$(jq -n --arg port "$hy2_port" --arg pass "$pass" --arg cert "$CERT_DIR/cert.pem" --arg key "$CERT_DIR/private.key" \
-            '{"type":"hysteria2","tag":"hy2-in","listen":"::","listen_port":($port|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}}')
+       hy2_in=$(jq -n --arg port "$hy2_port" --arg pass "$pass" --arg cert "$CERT_DIR/cert.pem" --arg key "$CERT_DIR/private.key" \
+    '{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}}')
     fi
 
     if [[ "$mode" == "all" || "$mode" == "reality" ]]; then
-        rel_in=$(jq -n --arg port "$rel_port" --arg uuid "$uuid" --arg pk "$pk" --arg sid "$sid" --arg sni "$sni_domain" \
-            '{"type":"vless","tag":"vless-in","listen":"::","listen_port":($port|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}')
+       rel_in=$(jq -n --arg port "$rel_port" --arg uuid "$uuid" --arg pk "$pk" --arg sid "$sid" --arg sni "$sni_domain" \
+    '{"type":"vless","tag":"vless-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}')
     fi
 
     jq -n --argjson hy2 "$hy2_in" --argjson rel "$rel_in" \
