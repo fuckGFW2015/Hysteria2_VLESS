@@ -179,7 +179,7 @@ generate_vless_ws_tls() {
     port=${port:-443}
 
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert
-    if [[ "$use_cert" =~ ^[Yy]$ ]]; then
+    if [[ "$use_cert" =～ ^[Yy]$ ]]; then
         read -p "证书文件路径 (fullchain.pem): " cert_path
         read -p "私钥文件路径 (privkey.pem): " key_path
         [[ ! -f "$cert_path" ]] && error "证书文件不存在: $cert_path"
@@ -198,7 +198,8 @@ generate_vless_ws_tls() {
 
         if ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
             mkdir -p "$CERT_DIR"
-            ～/.acme.sh/acme.sh --install-cert -d "$domain" \
+            # 🔧 修复：将全角 ～ 改为半角 ～
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
                 --cert-file "$CERT_DIR/cert.pem" \
                 --key-file "$CERT_DIR/private.key" \
                 --fullchain-file "$CERT_DIR/fullchain.pem"
@@ -295,27 +296,36 @@ show_info() {
     if [[ "$MODE" == "all" || "$MODE" == "hy2" ]]; then
         local link="hy2://$HY2_K@$IP:$HY2_P?insecure=1&sni=$SNI&alpn=h3#Hy2-VPS"
         echo -e "Hysteria2: $link"
-        qrencode -t ANSIUTF8 "$link"
+        qrencode -t UTF8 "$link"  # 也建议改为 UTF8
     fi
     if [[ "$MODE" == "all" || "$MODE" == "reality" ]]; then
         local link="vless://$REL_U@$IP:$REL_P?security=reality&sni=$SNI&fp=chrome&pbk=$REL_B&sid=$REL_S&flow=xtls-rprx-vision&type=tcp#Rel-Server"
         echo -e "Reality: $link"
-        qrencode -t ANSIUTF8 "$link"
+        qrencode -t UTF8 "$link"  # 也建议改为 UTF8
     fi
     echo -e "\n${YELLOW}⚠️  请确保云服务器安全组已放行相应端口${NC}"
 }
 
+# --- 8. 显示 VLESS-WS 信息（已修复 PATH 变量名）---
 show_vless_ws_info() {
     IP=$(grep '^IP=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     PORT=$(grep '^PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     UUID=$(grep '^UUID=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     DOMAIN=$(grep '^DOMAIN=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
-    PATH=$(grep '^PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    ws_path=$(grep '^PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')  # 🔧 关键：改用小写 ws_path
 
     echo -e "\n${GREEN}======= VLESS + WS + TLS =======${NC}"
-    local link="vless://${UUID}@${IP}:${PORT}?encryption=none&security=tls&type=ws&host=${DOMAIN}&path=${PATH}&fp=chrome#VLESS-WS"
+    local link="vless://${UUID}@${IP}:${PORT}?encryption=none&security=tls&type=ws&host=${DOMAIN}&path=${ws_path}&fp=chrome#VLESS-WS"
     echo -e "链接: $link"
-    qrencode -t ANSIUTF8 "$link"
+
+    if command -v qrencode &>/dev/null; then
+        echo -e "\n${BLUE}[二维码]${NC}"
+        echo "$link" | qrencode -t UTF8
+    else
+        echo -e "\n${YELLOW}⚠️  提示：未安装 qrencode，无法显示二维码。${NC}"
+        echo -e "${YELLOW}   运行 'apt install -y qrencode' 后重试。${NC}"
+    fi
+
     echo -e "\n${YELLOW}⚠️  注意：\n- 域名 ${DOMAIN} 必须解析到 ${IP}\n- 安全组需放行 ${PORT}/TCP\n- 生产环境建议使用有效证书${NC}"
 }
 
@@ -329,7 +339,7 @@ main_menu() {
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
     echo "3. 单独安装 Reality (VLESS)"
-    echo "4. 安装 VLESS + WebSocket + TLS"   # ← 你的需求
+    echo "4. 安装 VLESS + WebSocket + TLS"
     echo "------------------------------------"
     echo "5. 查看当前配置/二维码"
     echo "6. 查看实时日志"
