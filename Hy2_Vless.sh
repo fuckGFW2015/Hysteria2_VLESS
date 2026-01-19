@@ -59,28 +59,28 @@ install_deps() {
 
 # --- 2. 自动放行防火墙 ---
 open_ports() {
-    local ports=("$@")
     info "配置系统防火墙策略..."
     local handled=false
+    local p
 
-    for port in "${ports[@]}"; do
+    for p in "$@"; do
         if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-            ufw allow "$port"/tcp >/dev/null 2>&1
-            echo -e "  - UFW 已放行端口: $port (TCP)"
+            ufw allow "$p"/tcp >/dev/null 2>&1
+            echo -e "  - UFW 已放行端口: $p (TCP)"
             handled=true
         elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
-            firewall-cmd --permanent --add-port="$port"/tcp >/dev/null 2>&1
+            firewall-cmd --permanent --add-port="$p"/tcp >/dev/null 2>&1
             firewall-cmd --reload >/dev/null 2>&1
-            echo -e "  - Firewalld 已放行端口: $port (TCP)"
+            echo -e "  - Firewalld 已放行端口: $p (TCP)"
             handled=true
         fi
     done
 
     if ! $handled; then
-        for port in "${ports[@]}"; do
-            iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
-                iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
-            echo -e "  - iptables 已放行端口: $port (TCP)"
+        for p in "$@"; do
+            iptables -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || \
+                iptables -I INPUT -p tcp --dport "$p" -j ACCEPT
+            echo -e "  - iptables 已放行端口: $p (TCP)"
         done
         if command -v iptables-save &>/dev/null; then
             if command -v apt &>/dev/null; then
