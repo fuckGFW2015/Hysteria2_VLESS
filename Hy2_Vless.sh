@@ -63,6 +63,7 @@ open_ports() {
     local handled=false
     local p
 
+    # === 第一步：处理 TCP 端口（所有防火墙后端）===
     for p in "$@"; do
         if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
             ufw allow "$p"/tcp >/dev/null 2>&1
@@ -76,17 +77,30 @@ open_ports() {
         fi
     done
 
+    # === 第二步：如果没被高级防火墙处理，则用 iptables 处理 TCP + HY2 UDP ===
     if ! $handled; then
+        # 放行所有传入的 TCP 端口
         for p in "$@"; do
-            iptables -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || \
+            if ! iptables -C INPUT -p tcp --dport "$p" -j ACCEPT >/dev/null 2>&1; then
                 iptables -I INPUT -p tcp --dport "$p" -j ACCEPT
-            echo -e "  - iptables 已放行端口: $p (TCP)"
+                echo -e "  - iptables 已放行端口: $p (TCP)"
+            fi
         done
+
+        # 单独放行 Hysteria2 的 UDP 端口（仅当 HY_PORT 有值）
+        if [ -n "${HY_PORT:-}" ]; then
+            if ! iptables -C INPUT -p udp --dport "$HY_PORT" -j ACCEPT >/dev/null 2>&1; then
+                iptables -I INPUT -p udp --dport "$HY_PORT" -j ACCEPT
+                echo -e "  - iptables 已放行 Hysteria2 端口: $HY_PORT (UDP)"
+            fi
+        fi
+
+        # 保存 iptables 规则
         if command -v iptables-save &>/dev/null; then
             if command -v apt &>/dev/null; then
-                apt install -y iptables-persistent 2>/dev/null && netfilter-persistent save
+                apt install -y iptables-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1
             elif command -v dnf &>/dev/null; then
-                dnf install -y iptables-services 2>/dev/null && service iptables save
+                dnf install -y iptables-services >/dev/null 2>&1 && service iptables save >/dev/null 2>&1
             fi
         fi
     fi
