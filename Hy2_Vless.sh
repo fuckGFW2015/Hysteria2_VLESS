@@ -179,7 +179,7 @@ generate_vless_ws_tls() {
     port=${port:-443}
 
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert
-    if [[ "$use_cert" =～ ^[Yy]$ ]]; then
+    if [[ "$use_cert" =~ ^[Yy]$ ]]; then
         read -p "证书文件路径 (fullchain.pem): " cert_path
         read -p "私钥文件路径 (privkey.pem): " key_path
         [[ ! -f "$cert_path" ]] && error "证书文件不存在: $cert_path"
