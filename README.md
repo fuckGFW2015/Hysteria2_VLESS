@@ -5,65 +5,15 @@
   
 ** 自动从官方 GitHub Releases 下载并安装最新 beta 版本的 Sing-Box。
 
-*   **多种安装模式**
-   
-** 同时安装 Hysteria2 + Reality (VLESS)，实现双协议共存
+*   **脚本所有功能**
+  ```
+✅ 支持 VLESS + WebSocket + TLS（使用你的自定义域名）
+✅ 自动申请 Let's Encrypt 证书（或手动指定已有证书）
+✅ 兼容原有 Reality / Hysteria2 模式
+✅ 防火墙自动放行、BBR 加速、服务管理、二维码生成
+✅ 使用 acme.sh 轻量申请证书（不依赖 Nginx）
+```
 
-** 单独安装 Hysteria2
-
-** 单独安装 Reality (VLESS)
-
-*   **自动化配置**
-  
-** Hysteria2：自动生成自签名 TLS 证书、URL 安全的十六进制密码（避免链接解析失败）
-
-** Reality (VLESS)：自动生成 UUID、Reality 密钥对（私钥/公钥）、随机 short_id
-
-** 自动填充所有凭证到 /etc/sing-box/config.json
-
-** 支持用户交互式输入：监听端口、伪装域名（SNI）、是否启用 BBR 等
-
-*  **网络性能优化**
-
-** ✅ 自动检测并启用 BBR 拥塞控制算法（提升吞吐量与抗丢包能力）
-
-若内核 ≥ 4.9 且未启用 BBR，脚本将自动配置并重启网络栈生效
-
-*   **防火墙自动适配与端口放行**
-
-** ✅ 自动识别系统防火墙类型（ufw / firewalld / iptables）
-
-** ✅ 根据所选协议自动放行所需端口：
-
-** Hysteria2：开放 TCP + UDP 监听端口（如 8443）
-
-** Reality：开放 TCP 监听端口（如 443）
-
-** 云服务器友好：同时提示用户检查 云平台安全组（阿里云/腾讯云等）**
-
-  *  **导入信息与二维码**
-
-** 安装完成后，自动显示标准客户端链接（含 alpn=h3 提高兼容性）
-
-** 若系统已安装 qrencode，直接在终端渲染 ANSI 二维码
-
-** 支持随时通过菜单选项 重新查看配置与二维码
-
-*  **依赖自动处理**
-
-** 自动检测并安装核心依赖：curl, openssl, jq
-
-** 可选依赖 qrencode 缺失时仅跳过二维码生成，不影响主流程
-
-** 兼容主流发行版：Ubuntu/Debian（apt）、CentOS/Rocky（yum/dnf）
-
-*  **系统服务集成**
-
-** 自动生成 /etc/systemd/system/sing-box.service
-
-** 自动启用开机自启并启动服务
-
-** 提供日志查看、卸载清理等便捷操作
 
 ## 环境要求
 
@@ -89,10 +39,11 @@ bash <(curl -sSL https://raw.githubusercontent.com/fuckGFW2015/Hysteria2_VLESS/r
 1. 安装 Hysteria2 + Reality
 2. 单独安装 Hysteria2
 3. 单独安装 Reality (VLESS)
+4. 安装 VLESS + WebSocket + TLS"
 ------------------------------------
-4. 查看当前配置/二维码
-5. 查看实时日志
-6. 卸载 Sing-box
+5. 查看当前配置/二维码
+6. 查看实时日志
+7. 卸载 Sing-box
 0. 退出
 
 =======根据提示输入数字选择相应功能即可=======
