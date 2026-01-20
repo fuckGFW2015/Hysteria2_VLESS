@@ -117,7 +117,7 @@ generate_hy2_ws() {
     ~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
 
     info "正在申请证书（域名: $domain，邮箱: $EMAIL）..."
-    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force --server letsencrypt; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙/安全组已开放 80 端口
@@ -126,6 +126,7 @@ generate_hy2_ws() {
     if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
         --key-file "$CERT_DIR/ws.key"; then
+        --server letsencrypt; then
         error "证书安装失败"
     fi
 
