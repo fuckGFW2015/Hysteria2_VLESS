@@ -125,7 +125,7 @@ generate_hy2_ws() {
     fi
     if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
-        --key-file "$CERT_DIR/ws.key"; then
+        --key-file "$CERT_DIR/ws.key"; \
         --server letsencrypt; then
         error "证书安装失败"
     fi
