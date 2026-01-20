@@ -177,7 +177,7 @@ if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
   3. 无其他程序占用 80 端口（如 nginx、apache）"
     fi
 
-    if ! ～/.acme.sh/acme.sh --install-cert -d "$domain" \
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
         --key-file "$CERT_DIR/ws.key"; then
         error "证书安装失败"
