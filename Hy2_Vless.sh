@@ -88,12 +88,16 @@ open_ports() {
         done
 
         # 单独放行 Hysteria2 的 UDP 端口（仅当 HY_PORT 有值）
-        if [ -n "${HY_PORT:-}" ]; then
-            if ! iptables -C INPUT -p udp --dport "$HY_PORT" -j ACCEPT >/dev/null 2>&1; then
-                iptables -I INPUT -p udp --dport "$HY_PORT" -j ACCEPT
-                echo -e "  - iptables 已放行 Hysteria2 端口: $HY_PORT (UDP)"
+        for p in "$@"; do
+            if [[ "$p" == *"udp"* ]]; then
+                port_num=${p%/*}
+                proto=${p##*/}
+                if [[ "$proto" == "udp" ]] && ! iptables -C INPUT -p udp --dport "$port_num" -j ACCEPT >/dev/null 2>&1; then
+                    iptables -I INPUT -p udp --dport "$port_num" -j ACCEPT
+                    echo -e "  - iptables 已放行端口: $port_num (UDP)"
+                fi
             fi
-        fi
+        done
 
         # 保存 iptables 规则
         if command -v iptables-save &>/dev/null; then
@@ -184,7 +188,7 @@ generate_config() {
     echo -e "MODE=\"$mode\"\nIP=\"$ip\"\nHY2_P=\"$hy2_port\"\nHY2_K=\"$pass\"\nREL_P=\"$rel_port\"\nREL_U=\"$uuid\"\nREL_B=\"$pub\"\nREL_S=\"$sid\"\nSNI=\"$sni_domain\"" > "$DB_FILE"
 }
 
-# --- 5. 新增：VLESS + WebSocket + TLS ---
+# --- 5. VLESS + WebSocket + TLS ---
 generate_vless_ws_tls() {
     read -p "请输入你的域名 (必须已解析到本机 IP): " domain
     [[ -z "$domain" ]] && error "域名不能为空"
@@ -193,7 +197,7 @@ generate_vless_ws_tls() {
     port=${port:-443}
 
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert
-    if [[ "$use_cert" =~ ^[Yy]$ ]]; then
+    if [[ "$use_cert" =～ ^[Yy]$ ]]; then
         read -p "证书文件路径 (fullchain.pem): " cert_path
         read -p "私钥文件路径 (privkey.pem): " key_path
         [[ ! -f "$cert_path" ]] && error "证书文件不存在: $cert_path"
@@ -206,14 +210,13 @@ generate_vless_ws_tls() {
         # 停止占用 80 的服务
         systemctl stop nginx apache2 httpd 2>/dev/null || true
 
-        if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
+        if ! command -v ～/.acme.sh/acme.sh &>/dev/null; then
             curl -s https://get.acme.sh | sh -s email=my@example.com
         fi
 
-        if ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+        if ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
             mkdir -p "$CERT_DIR"
-            # 🔧 修复：将全角 ～ 改为半角 ～
-            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ～/.acme.sh/acme.sh --install-cert -d "$domain" \
                 --cert-file "$CERT_DIR/cert.pem" \
                 --key-file "$CERT_DIR/private.key" \
                 --fullchain-file "$CERT_DIR/fullchain.pem"
@@ -245,7 +248,7 @@ generate_vless_ws_tls() {
         '{
             "type": "vless",
             "tag": "vless-ws-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": ($port | tonumber),
             "users": [{"uuid": $uuid}],
             "tls": {
@@ -267,7 +270,137 @@ generate_vless_ws_tls() {
     success "VLESS + WS + TLS 配置生成成功（域名: $domain）"
 }
 
-# --- 6. 服务部署 ---
+# --- 6. 新增：一键安装 Hysteria2 + VLESS-WS ---
+generate_hy2_and_vless_ws() {
+    # === 第一步：收集参数 ===
+    read -p "请输入 Hysteria2 的伪装域名 (SNI, 默认 www.cloudflare.com): " hy_sni
+    hy_sni=${hy_sni:-"www.cloudflare.com"}
+    
+    read -p "Hysteria2 端口 (默认 8443): " hy_port
+    hy_port=${hy_port:-8443}
+
+    read -p "请输入 VLESS-WS 的域名 (必须已解析到本机 IP): " ws_domain
+    [[ -z "$ws_domain" ]] && error "VLESS-WS 域名不能为空"
+
+    read -p "VLESS-WS 端口 (默认 443): " ws_port
+    ws_port=${ws_port:-443}
+
+    # === 第二步：放行端口（显式指定协议）===
+    open_ports "$hy_port" "$ws_port"
+
+    # 手动放行 UDP（因 open_ports 可能未处理纯数字的 UDP）
+    if ! iptables -C INPUT -p udp --dport "$hy_port" -j ACCEPT >/dev/null 2>&1; then
+        iptables -I INPUT -p udp --dport "$hy_port" -j ACCEPT
+        echo -e "  - 手动放行 Hysteria2 UDP 端口: $hy_port"
+    fi
+
+    # === 第三步：生成 Hysteria2 自签名证书 ===
+    info "生成 Hysteria2 自签名证书..."
+    mkdir -p "$CERT_DIR"
+    openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
+    openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/hy2.key" \
+        -out "$CERT_DIR/hy2.pem" -subj "/CN=$hy_sni" >/dev/null 2>&1
+
+    local hy_pass=$(openssl rand -hex 16)
+    local hy_in=$(jq -n \
+        --arg port "$hy_port" \
+        --arg pass "$hy_pass" \
+        --arg cert "$CERT_DIR/hy2.pem" \
+        --arg key "$CERT_DIR/hy2.key" \
+        '{
+            "type": "hysteria2",
+            "tag": "hy2-in",
+            "listen": "0.0.0.0",
+            "listen_port": ($port | tonumber),
+            "users": [{"password": $pass}],
+            "tls": {
+                "enabled": true,
+                "certificate_path": $cert,
+                "key_path": $key
+            }
+        }')
+
+    # === 第四步：生成 VLESS-WS ===
+    info "配置 VLESS-WS + TLS..."
+    local use_cert_input=""
+    read -p "是否使用现有证书？(y/n，默认 n): " use_cert_input
+    if [[ "$use_cert_input" =～ ^[Yy]$ ]]; then
+        read -p "证书文件路径: " ws_cert
+        read -p "私钥文件路径: " ws_key
+        [[ ! -f "$ws_cert" ]] && error "证书不存在: $ws_cert"
+        [[ ! -f "$ws_key" ]] && error "私钥不存在: $ws_key"
+    else
+        install_deps
+        open_ports 80
+        systemctl stop nginx apache2 httpd 2>/dev/null || true
+
+        if ! command -v ～/.acme.sh/acme.sh &>/dev/null; then
+            curl -s https://get.acme.sh | sh -s email=my@example.com >/dev/null
+        fi
+
+        if ～/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --force; then
+            mkdir -p "$CERT_DIR"
+            ～/.acme.sh/acme.sh --install-cert -d "$ws_domain" \
+                --cert-file "$CERT_DIR/ws.pem" \
+                --key-file "$CERT_DIR/ws.key" \
+                --fullchain-file "$CERT_DIR/ws-fullchain.pem"
+            ws_cert="$CERT_DIR/ws-fullchain.pem"
+            ws_key="$CERT_DIR/ws.key"
+            success "Let's Encrypt 证书申请成功"
+        else
+            warn "自动申请失败，使用自签名证书（仅测试）"
+            openssl req -new -x509 -days 365 -nodes -subj "/CN=$ws_domain" \
+                -out "$CERT_DIR/ws.pem" -keyout "$CERT_DIR/ws.key" >/dev/null 2>&1
+            ws_cert="$CERT_DIR/ws.pem"
+            ws_key="$CERT_DIR/ws.key"
+        fi
+    fi
+
+    local ws_uuid=$($SINGBOX_BIN generate uuid)
+    local ws_path="/$(openssl rand -hex 6)"
+    local ws_in=$(jq -n \
+        --arg port "$ws_port" \
+        --arg uuid "$ws_uuid" \
+        --arg cert "$ws_cert" \
+        --arg key "$ws_key" \
+        --arg domain "$ws_domain" \
+        --arg path "$ws_path" \
+        '{
+            "type": "vless",
+            "tag": "vless-ws-in",
+            "listen": "0.0.0.0",
+            "listen_port": ($port | tonumber),
+            "users": [{"uuid": $uuid}],
+            "tls": {
+                "enabled": true,
+                "certificate_path": $cert,
+                "key_path": $key
+            },
+            "transport": {
+                "type": "ws",
+                "path": $path,
+                "headers": {"Host": $domain}
+            }
+        }')
+
+    # === 第五步：合并配置 ===
+    jq -n \
+        --argjson hy "$hy_in" \
+        --argjson ws "$ws_in" \
+        '{
+            "log": {"level": "info", "timestamp": true},
+            "inbounds": [$hy, $ws],
+            "outbounds": [{"type": "direct", "tag": "direct"}]
+        }' > "$CONF_FILE"
+
+    # === 第六步：保存数据 ===
+    local ip=$(curl -s https://api.ipify.org)
+    echo -e "MODE=\"hy2+vless-ws\"\nIP=\"$ip\"\nHY_PORT=\"$hy_port\"\nHY_PASS=\"$hy_pass\"\nHY_SNI=\"$hy_sni\"\nWS_PORT=\"$ws_port\"\nWS_UUID=\"$ws_uuid\"\nWS_DOMAIN=\"$ws_domain\"\nWS_PATH=\"$ws_path\"\nWS_CERT=\"$ws_cert\"\nWS_KEY=\"$ws_key\"" > "$DB_FILE"
+
+    success "Hysteria2 + VLESS-WS 配置生成成功！"
+}
+
+# --- 7. 服务部署 ---
 setup_service() {
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
@@ -288,12 +421,15 @@ EOF
     success "服务已启动"
 }
 
-# --- 7. 显示信息 ---
+# --- 8. 显示信息 ---
 show_info() {
     [[ ! -f "$DB_FILE" ]] && { warn "未找到记录"; return; }
     MODE=$(grep '^MODE=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     if [[ "$MODE" == "vless-ws" ]]; then
         show_vless_ws_info
+        return
+    elif [[ "$MODE" == "hy2+vless-ws" ]]; then
+        show_hy2_and_vless_info
         return
     fi
 
@@ -310,23 +446,23 @@ show_info() {
     if [[ "$MODE" == "all" || "$MODE" == "hy2" ]]; then
         local link="hy2://$HY2_K@$IP:$HY2_P?insecure=1&sni=$SNI&alpn=h3#Hy2-VPS"
         echo -e "Hysteria2: $link"
-        qrencode -t UTF8 "$link"  # 也建议改为 UTF8
+        qrencode -t UTF8 "$link"
     fi
     if [[ "$MODE" == "all" || "$MODE" == "reality" ]]; then
         local link="vless://$REL_U@$IP:$REL_P?security=reality&sni=$SNI&fp=chrome&pbk=$REL_B&sid=$REL_S&flow=xtls-rprx-vision&type=tcp#Rel-Server"
         echo -e "Reality: $link"
-        qrencode -t UTF8 "$link"  # 也建议改为 UTF8
+        qrencode -t UTF8 "$link"
     fi
     echo -e "\n${YELLOW}⚠️  请确保云服务器安全组已放行相应端口${NC}"
 }
 
-# --- 8. 显示 VLESS-WS 信息（已修复 PATH 变量名）---
+# --- 9. 显示 VLESS-WS 信息 ---
 show_vless_ws_info() {
     IP=$(grep '^IP=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     PORT=$(grep '^PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     UUID=$(grep '^UUID=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     DOMAIN=$(grep '^DOMAIN=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
-    ws_path=$(grep '^PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')  # 🔧 关键：改用小写 ws_path
+    ws_path=$(grep '^PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
 
     echo -e "\n${GREEN}======= VLESS + WS + TLS =======${NC}"
     local link="vless://${UUID}@${IP}:${PORT}?encryption=none&security=tls&type=ws&host=${DOMAIN}&path=${ws_path}&fp=chrome#VLESS-WS"
@@ -343,6 +479,42 @@ show_vless_ws_info() {
     echo -e "\n${YELLOW}⚠️  注意：\n- 域名 ${DOMAIN} 必须解析到 ${IP}\n- 安全组需放行 ${PORT}/TCP\n- 生产环境建议使用有效证书${NC}"
 }
 
+# --- 10. 显示 Hysteria2 + VLESS-WS 信息 ---
+show_hy2_and_vless_info() {
+    [[ ! -f "$DB_FILE" ]] && { warn "未找到记录"; return; }
+    MODE=$(grep '^MODE=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    [[ "$MODE" != "hy2+vless-ws" ]] && return
+
+    IP=$(grep '^IP=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    HY_PORT=$(grep '^HY_PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    HY_PASS=$(grep '^HY_PASS=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    HY_SNI=$(grep '^HY_SNI=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    WS_PORT=$(grep '^WS_PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    WS_UUID=$(grep '^WS_UUID=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    WS_DOMAIN=$(grep '^WS_DOMAIN=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+    WS_PATH=$(grep '^WS_PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
+
+    echo -e "\n${GREEN}======= Hysteria2 + VLESS-WS 共存配置 =======${NC}"
+
+    # Hysteria2 链接
+    local hy_link="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI&alpn=h3#Hy2-VPS"
+    echo -e "【Hysteria2】\n$hy_link"
+    if command -v qrencode &>/dev/null; then
+        echo "$hy_link" | qrencode -t UTF8
+    fi
+
+    echo -e "\n${GREEN}----------------------------------------${NC}"
+
+    # VLESS-WS 链接
+    local ws_link="vless://${WS_UUID}@${IP}:${WS_PORT}?encryption=none&security=tls&type=ws&host=${WS_DOMAIN}&path=${WS_PATH}&fp=chrome#VLESS-WS"
+    echo -e "【VLESS-WS】\n$ws_link"
+    if command -v qrencode &>/dev/null; then
+        echo "$ws_link" | qrencode -t UTF8
+    fi
+
+    echo -e "\n${YELLOW}⚠️  注意：\n- HY2 使用 SNI: $HY_SNI\n- VLESS-WS 域名: $WS_DOMAIN 必须解析到 $IP\n- 安全组需放行 $HY_PORT/UDP 和 $WS_PORT/TCP${NC}"
+}
+
 # --- 主菜单 ---
 main_menu() {
     clear
@@ -354,10 +526,11 @@ main_menu() {
     echo "2. 单独安装 Hysteria2"
     echo "3. 单独安装 Reality (VLESS)"
     echo "4. 安装 VLESS + WebSocket + TLS"
+    echo "5. 安装 Hysteria2 + VLESS-WS"
     echo "------------------------------------"
-    echo "5. 查看当前配置/二维码"
-    echo "6. 查看实时日志"
-    echo "7. 卸载 Sing-box"
+    echo "6. 查看当前配置/二维码"
+    echo "7. 查看实时日志"
+    echo "8. 卸载 Sing-box"
     echo "0. 退出"
     read -p "请选择: " opt
     case $opt in
@@ -365,9 +538,10 @@ main_menu() {
         2) install_deps; enable_bbr; install_core; generate_config "hy2"; setup_service; show_info ;;
         3) install_deps; enable_bbr; install_core; generate_config "reality"; setup_service; show_info ;;
         4) install_deps; enable_bbr; install_core; generate_vless_ws_tls; setup_service; show_vless_ws_info ;;
-        5) show_info ;;
-        6) journalctl -u sing-box -f -n 50 ;;
-        7) systemctl disable --now sing-box; rm -rf "$SINGBOX_BIN" "$CONF_DIR" /etc/systemd/system/sing-box.service; systemctl daemon-reload; success "卸载完成" ;;
+        5) install_deps; enable_bbr; install_core; generate_hy2_and_vless_ws; setup_service; show_hy2_and_vless_info ;;
+        6) show_info ;;
+        7) journalctl -u sing-box -f -n 50 ;;
+        8) systemctl disable --now sing-box; rm -rf "$SINGBOX_BIN" "$CONF_DIR" /etc/systemd/system/sing-box.service; systemctl daemon-reload; success "卸载完成" ;;
         *) exit ;;
     esac
 }
