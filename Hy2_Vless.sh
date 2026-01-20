@@ -1,4 +1,4 @@
-cat << 'EOF' > Hy2_Vless_Official.sh
+cat << 'EOF' > fix_hy2.sh
 #!/bin/bash
 
 # --- 路径与常量配置 ---
@@ -110,7 +110,7 @@ generate_hy2_ws() {
     local path="/$(openssl rand -hex 6)"
     local pass=$(openssl rand -hex 12)
 
-    info "正在通过 acme.sh 申请正式证书..."
+    info "正在申请证书 (请确保80端口空闲)..."
     if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
     ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
     ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
@@ -121,11 +121,11 @@ generate_hy2_ws() {
     echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"8443\"\nHY_SNI=\"$domain\"\nWS_UUID=\"$uuid\"\nWS_PORT=\"443\"\nWS_DOMAIN=\"$domain\"\nWS_PATH=\"$path\"" > "$DB_FILE"
 }
 
-# --- 4. 主菜单 (保留 1-8) ---
+# --- 4. 主菜单 (保留 1-8 菜单) ---
 main_menu() {
     clear
     echo -e "${CYAN}====================================${NC}"
-    echo -e "${CYAN}   Sing-Box 管理脚本 (修复增强版)   ${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (官方修复版)  ${NC}"
     echo -e "${CYAN}====================================${NC}"
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
@@ -147,7 +147,7 @@ main_menu() {
         *) exit 0 ;;
     esac
 
-    # 自动部署 Systemd
+    # 自动生成并启动服务
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box service
@@ -165,5 +165,5 @@ EOF
 
 main_menu
 EOF
-chmod +x Hy2_Vless_Official.sh
-./Hy2_Vless_Official.sh
+chmod +x fix_hy2.sh
+./fix_hy2.sh
