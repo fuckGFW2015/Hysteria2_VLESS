@@ -114,16 +114,16 @@ generate_hy2_ws() {
     if [ ! -d "$HOME/.acme.sh" ]; then
         curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
     fi
-    ～/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
+    ~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
 
     info "正在申请证书（域名: $domain，邮箱: $EMAIL）..."
-    if ! ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force --server letsencrypt; then
+    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force --server letsencrypt; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙/安全组已开放 80 端口
   3. 无其他程序占用 80 端口"
     fi
-    if ! ～/.acme.sh/acme.sh --install-cert -d "$domain" \
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
         --key-file "$CERT_DIR/ws.key" \
         --server letsencrypt; then
