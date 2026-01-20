@@ -131,7 +131,7 @@ generate_config() {
     jq -n --argjson hy2 "$hy2_in" --argjson rel "$rel_in" '{"log":{"level":"info","timestamp":true},"inbounds":([$hy2, $rel]|map(select(.!=null))),"outbounds":[{"type":"direct","tag":"direct"}]}' > "$CONF_FILE"
 }
 
-# --- 5. Hy2 + VLESS-WS (已修复邮箱注册问题) ---
+# --- 5. Hy2 + VLESS-WS (已补全函数结尾) ---
 generate_hy2_and_vless_ws() {
     read -p "Hy2 SNI (默认 www.bing.com): " hy_sni; hy_sni=${hy_sni:-"www.bing.com"}
     read -p "Hy2 端口 (默认 8443): " hy_port; hy_port=${hy_port:-8443}
@@ -142,21 +142,20 @@ generate_hy2_and_vless_ws() {
     open_ports "$hy_port/udp" "$ws_port/tcp" "80/tcp"
     systemctl stop nginx apache2 httpd 2>/dev/null || true
 
-    # --- 证书环境初始化 (强制重置旧账户) ---
+    # --- 证书环境初始化 ---
     if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
         curl -s https://get.acme.sh | sh -s email=admin@${ws_domain} >/dev/null
     fi
     
-    # 彻底清理旧的 CA 注册信息，解决 forbidden domain "example.com" 报错
     rm -rf ~/.acme.sh/ca
     ~/.acme.sh/acme.sh --register-account -m "admin@${ws_domain}" --server letsencrypt --force
 
-    # Hy2 证书 (保持自签名)
+    # Hy2 证书
     openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
     openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/hy2.key" -out "$CERT_DIR/hy2.pem" -subj "/CN=$hy_sni" >/dev/null 2>&1
     local hy_pass=$(openssl rand -hex 16)
 
-    # WS 证书申请 (强制使用 Let's Encrypt 并显式传递邮箱)
+    # WS 证书申请
     local ws_cert=""
     local ws_key=""
     info "正在向 Let's Encrypt 申请正式证书..."
@@ -166,7 +165,7 @@ generate_hy2_and_vless_ws() {
         ws_key="$CERT_DIR/ws.key"
         success "正式证书申请成功！"
     else
-        warn "申请失败，切换自签名 (请在客户端开启'允许不安全连接')"
+        warn "申请失败，切换自签名"
         openssl req -new -x509 -days 365 -nodes -subj "/CN=$ws_domain" -out "$CERT_DIR/ws.pem" -keyout "$CERT_DIR/ws.key" >/dev/null 2>&1
         ws_cert="$CERT_DIR/ws.pem"
         ws_key="$CERT_DIR/ws.key"
@@ -175,17 +174,15 @@ generate_hy2_and_vless_ws() {
     local ws_uuid=$($SINGBOX_BIN generate uuid)
     local ws_path="/$(openssl rand -hex 6)"
     
-    # 生成 Inbound 配置
     local hy_in=$(jq -n --arg port "$hy_port" --arg pass "$hy_pass" --arg cert "$CERT_DIR/hy2.pem" --arg key "$CERT_DIR/hy2.key" \
         '{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}}')
     local ws_in=$(jq -n --arg port "$ws_port" --arg uuid "$ws_uuid" --arg cert "$ws_cert" --arg key "$ws_key" --arg domain "$ws_domain" --arg path "$ws_path" \
         '{"type":"vless","tag":"vless-ws-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"uuid":$uuid}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key},"transport":{"type":"ws","path":$path,"headers":{"Host":$domain}}}')
 
-    # 写入配置文件
     jq -n --argjson hy "$hy_in" --argjson ws "$ws_in" '{"log":{"level":"info"},"inbounds":[$hy, $ws],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
     
-    # 保存数据用于显示
     echo -e "MODE=\"hy2+vless-ws\"\nIP=\"$(curl -s https://api.ipify.org)\"\nHY_PORT=\"$hy_port\"\nHY_PASS=\"$hy_pass\"\nHY_SNI=\"$hy_sni\"\nWS_PORT=\"$ws_port\"\nWS_UUID=\"$ws_uuid\"\nWS_DOMAIN=\"$ws_domain\"\nWS_PATH=\"$ws_path\"" > "$DB_FILE"
+} # <--- 这里之前漏掉了！
 
 # --- 7. 服务部署与菜单 ---
 setup_service() {
@@ -212,13 +209,16 @@ show_info() {
     if [[ "$MODE" == "hy2+vless-ws" ]]; then
         echo -e "Hy2: hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI#Hy2"
         echo -e "WS: vless://$WS_UUID@$IP:$WS_PORT?encryption=none&security=tls&type=ws&host=$WS_DOMAIN&path=$WS_PATH#VLESS-WS"
+    elif [[ "$MODE" == "all" ]]; then
+        echo -e "Hy2: hy2://$HY2_K@$IP:$HY2_P?insecure=1&sni=$SNI#Hy2"
+        echo -e "Reality: vless://$REL_U@$IP:$REL_P?security=reality&sni=$SNI&fp=chrome&pbk=$REL_B&sid=$REL_S&flow=xtls-rprx-vision&type=tcp#Reality"
     fi
 }
 
 main_menu() {
     clear
     echo -e "${CYAN}====================================${NC}"
-    echo -e "${CYAN}   Sing-Box 管理脚本 (邮箱修复版)   ${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (修复版)      ${NC}"
     echo -e "${CYAN}====================================${NC}"
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
