@@ -243,3 +243,4 @@ main_menu() {
 
 [[ "$(id -u)" -ne 0 ]] && error "请用 root 运行"
 main_menu
+}
