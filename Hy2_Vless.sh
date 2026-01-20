@@ -1,4 +1,4 @@
-cat << 'EOF' > fix_hy2.sh
+cat << 'EOF' > Hy2_Vless_Fix.sh
 #!/bin/bash
 
 # --- 路径与常量配置 ---
@@ -16,15 +16,15 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 核心辅助函数 (定义在最前，防止 command not found) ---
+# --- 核心辅助函数 (必须定义在最前，防止 command not found) ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# --- 1. 环境准备 ---
+# --- 基础环境 ---
 install_deps() {
-    info "正在安装必要依赖 (jq, qrencode, openssl)..."
+    info "安装必要依赖 (jq, qrencode, openssl)..."
     local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
     if command -v apt &>/dev/null; then
         apt update && apt install -y "${deps[@]}"
@@ -34,7 +34,7 @@ install_deps() {
 }
 
 enable_bbr() {
-    info "检测并启用 BBR 加速..."
+    info "开启 BBR 加速..."
     if ! sysctl net.ipv4.tcp_congestion_control | grep -q 'bbr'; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
@@ -55,7 +55,7 @@ install_core() {
     mkdir -p "$CONF_DIR" "$CERT_DIR"
 }
 
-# --- 2. 展示信息与二维码 (位置挪到调用之前) ---
+# --- 展示信息与二维码 (位置挪到调用之前) ---
 show_info() {
     [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录，请先安装节点"; return; }
     source "$DB_FILE"
@@ -78,7 +78,7 @@ show_info() {
     fi
 }
 
-# --- 3. 配置生成逻辑 ---
+# --- 配置生成逻辑 ---
 generate_config() {
     local mode=$1
     read -p "伪装域名 (SNI) [www.bing.com]: " sni; sni=${sni:-"www.bing.com"}
@@ -103,14 +103,14 @@ generate_config() {
 }
 
 generate_hy2_ws() {
-    read -p "请输入已解析的域名: " domain
+    read -p "解析好的域名: " domain
     [[ -z "$domain" ]] && error "域名不能为空"
     local ip=$(curl -s https://api.ipify.org)
     local uuid=$($SINGBOX_BIN generate uuid)
     local path="/$(openssl rand -hex 6)"
     local pass=$(openssl rand -hex 12)
 
-    info "正在申请证书 (请确保80端口空闲)..."
+    info "申请正式证书 (确保80端口空闲)..."
     if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
     ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
     ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
@@ -121,11 +121,11 @@ generate_hy2_ws() {
     echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"8443\"\nHY_SNI=\"$domain\"\nWS_UUID=\"$uuid\"\nWS_PORT=\"443\"\nWS_DOMAIN=\"$domain\"\nWS_PATH=\"$path\"" > "$DB_FILE"
 }
 
-# --- 4. 主菜单 (保留 1-8 菜单) ---
+# --- 主菜单 ---
 main_menu() {
     clear
     echo -e "${CYAN}====================================${NC}"
-    echo -e "${CYAN}   Sing-Box 管理脚本 (官方修复版)  ${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (修复版)      ${NC}"
     echo -e "${CYAN}====================================${NC}"
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
@@ -147,10 +147,9 @@ main_menu() {
         *) exit 0 ;;
     esac
 
-    # 自动生成并启动服务
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
-Description=sing-box service
+Description=sing-box
 After=network.target
 [Service]
 ExecStart=$SINGBOX_BIN run -c $CONF_FILE
@@ -159,11 +158,10 @@ Restart=always
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable --now sing-box
-    success "Sing-box 已启动"
     show_info
 }
 
 main_menu
 EOF
-chmod +x fix_hy2.sh
-./fix_hy2.sh
+chmod +x Hy2_Vless_Fix.sh
+./Hy2_Vless_Fix.sh
