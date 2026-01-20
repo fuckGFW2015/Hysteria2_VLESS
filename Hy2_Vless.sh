@@ -324,7 +324,7 @@ generate_hy2_and_vless_ws() {
     info "配置 VLESS-WS + TLS..."
     local use_cert_input=""
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert_input
-    if [[ "$use_cert_input" =～ ^[Yy]$ ]]; then
+    if [[ "$use_cert_input" =~ ^[Yy]$ ]]; then
         read -p "证书文件路径: " ws_cert
         read -p "私钥文件路径: " ws_key
         [[ ! -f "$ws_cert" ]] && error "证书不存在: $ws_cert"
@@ -334,13 +334,13 @@ generate_hy2_and_vless_ws() {
         open_ports 80
         systemctl stop nginx apache2 httpd 2>/dev/null || true
 
-        if ! command -v ～/.acme.sh/acme.sh &>/dev/null; then
+        if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
             curl -s https://get.acme.sh | sh -s email=my@example.com >/dev/null
         fi
 
-        if ～/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --force; then
+        if ~/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --force; then
             mkdir -p "$CERT_DIR"
-            ～/.acme.sh/acme.sh --install-cert -d "$ws_domain" \
+            ~/.acme.sh/acme.sh --install-cert -d "$ws_domain" \
                 --cert-file "$CERT_DIR/ws.pem" \
                 --key-file "$CERT_DIR/ws.key" \
                 --fullchain-file "$CERT_DIR/ws-fullchain.pem"
