@@ -153,35 +153,42 @@ generate_hy2_ws() {
     local ip=$(curl -s https://api.ipify.org)
     [[ -z "$ip" ]] && error "无法获取公网 IP"
 
-    local uuid=$($SINGBOX_BIN generate uuid)
-    local path="/$(openssl rand -hex 6)"
-    local pass=$(openssl rand -hex 12)
+    # === 关键修复：确保使用合法邮箱 ===
+    local EMAIL="admin@$(echo "$domain" | sed 's/^[^.]*\.//')"
+    
+    # 如果 acme.sh 已存在，但邮箱是 example.com，则强制重置
+    if [ -f "$HOME/.acme.sh/account.conf" ]; then
+        if grep -q "example\.com" "$HOME/.acme.sh/account.conf"; then
+            warn "检测到无效邮箱配置，正在重置 acme.sh..."
+            rm -rf "$HOME/.acme.sh"
+        fi
+    fi
 
-    info "正在通过 acme.sh 申请正式证书（需临时开放 80 端口）..."
+    # 安装 acme.sh（如果未安装）
     if [ ! -d "$HOME/.acme.sh" ]; then
-    curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
-fi
+        curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
+    fi
 
-# 设置有效邮箱（关键！）
-EMAIL="admin@$(echo "$domain" | sed 's/^[^.]*\.//')"  # 自动生成 admin@yourdomain.com
-# 或者你可以提示用户输入：
-# read -p "请输入用于证书申请的邮箱 (如: user@gmail.com): " EMAIL
-# [[ -z "$EMAIL" ]] && error "邮箱不能为空"
+    # 注册合法邮箱
+    ~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
 
-~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
-
-if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+    info "正在申请证书（域名: $domain，邮箱: $EMAIL）..."
+    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
-  2. 防火墙已开放 80 端口
+  2. 防火墙/安全组已开放 80 端口
   3. 无其他程序占用 80 端口（如 nginx、apache）"
     fi
 
+    # 安装证书
     if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
         --key-file "$CERT_DIR/ws.key"; then
         error "证书安装失败"
     fi
+
+    # ... 后续生成配置 ...
+}
 
     jq -n --arg hp "8443" --arg pass "$pass" --arg wp "443" --arg uuid "$uuid" --arg domain "$domain" --arg path "$path" --arg cert "$CERT_DIR/ws.pem" --arg key "$CERT_DIR/ws.key" \
     '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"ws-in","listen":"0.0.0.0","listen_port":($wp|tonumber),"users":[{"uuid":$uuid}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key},"transport":{"type":"ws","path":$path}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
