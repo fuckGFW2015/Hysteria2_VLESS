@@ -197,7 +197,7 @@ generate_vless_ws_tls() {
     port=${port:-443}
 
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert
-    if [[ "$use_cert" =～ ^[Yy]$ ]]; then
+    if [[ "$use_cert" =~ ^[Yy]$ ]]; then
         read -p "证书文件路径 (fullchain.pem): " cert_path
         read -p "私钥文件路径 (privkey.pem): " key_path
         [[ ! -f "$cert_path" ]] && error "证书文件不存在: $cert_path"
@@ -210,13 +210,13 @@ generate_vless_ws_tls() {
         # 停止占用 80 的服务
         systemctl stop nginx apache2 httpd 2>/dev/null || true
 
-        if ! command -v ～/.acme.sh/acme.sh &>/dev/null; then
+        if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
             curl -s https://get.acme.sh | sh -s email=my@example.com
         fi
 
-        if ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+        if ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
             mkdir -p "$CERT_DIR"
-            ～/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
                 --cert-file "$CERT_DIR/cert.pem" \
                 --key-file "$CERT_DIR/private.key" \
                 --fullchain-file "$CERT_DIR/fullchain.pem"
