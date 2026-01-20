@@ -26,7 +26,11 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 install_deps() {
     info "安装必要依赖..."
     local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
-    apt update && apt install -y "${deps[@]}"
+    if command -v apt &>/dev/null; then
+        apt update && apt install -y "${deps[@]}"
+    elif command -v dnf &>/dev/null; then
+        dnf install -y epel-release && dnf install -y "${deps[@]}"
+    fi
 }
 
 enable_bbr() {
@@ -50,50 +54,6 @@ install_core() {
     mkdir -p "$CONF_DIR" "$CERT_DIR"
 }
 
-# --- 功能逻辑 ---
-generate_config() {
-    local mode=$1
-    read -p "伪装域名 (SNI) [www.bing.com]: " sni; sni=${sni:-"www.bing.com"}
-    read -p "Hy2 端口 [8443]: " hy_p; hy_p=${hy_p:-8443}
-    read -p "Reality 端口 [443]: " rel_p; rel_p=${rel_p:-443}
-
-    local uuid=$($SINGBOX_BIN generate uuid)
-    local keypair=$($SINGBOX_BIN generate reality-keypair)
-    local pk=$(echo "$keypair" | awk '/PrivateKey/ {print $2}')
-    local pub=$(echo "$keypair" | awk '/PublicKey/ {print $2}')
-    local sid=$(openssl rand -hex 4)
-    local pass=$(openssl rand -hex 16)
-    local ip=$(curl -s https://api.ipify.org)
-
-    # 自签名证书用于 Hy2
-    openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
-    openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/hy2.key" -out "$CERT_DIR/hy2.pem" -subj "/CN=$sni" >/dev/null 2>&1
-
-    jq -n --arg hp "$hy_p" --arg pass "$pass" --arg rp "$rel_p" --arg uuid "$uuid" --arg pk "$pk" --arg sid "$sid" --arg sni "$sni" --arg cert "$CERT_DIR/hy2.pem" --arg key "$CERT_DIR/hy2.key" \
-    '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"vless-in","listen":"0.0.0.0","listen_port":($rp|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
-
-    echo -e "MODE=\"reality_hy2\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy_p\"\nSNI=\"$sni\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_p\"\nREL_PUB=\"$pub\"\nREL_SID=\"$sid\"" > "$DB_FILE"
-}
-
-generate_hy2_ws() {
-    read -p "请输入解析好的域名: " domain
-    [[ -z "$domain" ]] && error "域名不能为空"
-    local ip=$(curl -s https://api.ipify.org)
-    local uuid=$($SINGBOX_BIN generate uuid)
-    local path="/$(openssl rand -hex 6)"
-    local pass=$(openssl rand -hex 12)
-
-    info "证书申请中 (需确保80端口空闲)..."
-    if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
-    ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
-    ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
-
-    jq -n --arg hp "8443" --arg pass "$pass" --arg wp "443" --arg uuid "$uuid" --arg domain "$domain" --arg path "$path" --arg cert "$CERT_DIR/ws.pem" --arg key "$CERT_DIR/ws.key" \
-    '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"ws-in","listen":"0.0.0.0","listen_port":($wp|tonumber),"users":[{"uuid":$uuid}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key},"transport":{"type":"ws","path":$path}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
-
-    echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"8443\"\nHY_SNI=\"$domain\"\nWS_UUID=\"$uuid\"\nWS_PORT=\"443\"\nWS_DOMAIN=\"$domain\"\nWS_PATH=\"$path\"" > "$DB_FILE"
-}
-
 # --- 信息展示与二维码 ---
 show_info() {
     [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录"; return; }
@@ -112,7 +72,50 @@ show_info() {
     fi
 }
 
-# --- 菜单界面 (完全保留原版菜單) ---
+# --- 功能逻辑 ---
+generate_config() {
+    local mode=$1
+    read -p "伪装域名 (SNI) [www.bing.com]: " sni; sni=${sni:-"www.bing.com"}
+    read -p "Hy2 端口 [8443]: " hy_p; hy_p=${hy_p:-8443}
+    read -p "Reality 端口 [443]: " rel_p; rel_p=${rel_p:-443}
+
+    local uuid=$($SINGBOX_BIN generate uuid)
+    local keypair=$($SINGBOX_BIN generate reality-keypair)
+    local pk=$(echo "$keypair" | awk '/PrivateKey/ {print $2}')
+    local pub=$(echo "$keypair" | awk '/PublicKey/ {print $2}')
+    local sid=$(openssl rand -hex 4)
+    local pass=$(openssl rand -hex 16)
+    local ip=$(curl -s https://api.ipify.org)
+
+    openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
+    openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/hy2.key" -out "$CERT_DIR/hy2.pem" -subj "/CN=$sni" >/dev/null 2>&1
+
+    jq -n --arg hp "$hy_p" --arg pass "$pass" --arg rp "$rel_p" --arg uuid "$uuid" --arg pk "$pk" --arg sid "$sid" --arg sni "$sni" --arg cert "$CERT_DIR/hy2.pem" --arg key "$CERT_DIR/hy2.key" \
+    '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"vless-in","listen":"0.0.0.0","listen_port":($rp|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
+
+    echo -e "MODE=\"reality_hy2\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy_p\"\nSNI=\"$sni\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_p\"\nREL_PUB=\"$pub\"\nREL_SID=\"$sid\"" > "$DB_FILE"
+}
+
+generate_hy2_ws() {
+    read -p "请输入解析好的域名: " domain
+    [[ -z "$domain" ]] && error "域名不能为空"
+    local ip=$(curl -s https://api.ipify.org)
+    local uuid=$($SINGBOX_BIN generate uuid)
+    local path="/$(openssl rand -hex 6)"
+    local pass=$(openssl rand -hex 12)
+
+    info "证书申请中..."
+    if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
+    ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
+    ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
+
+    jq -n --arg hp "8443" --arg pass "$pass" --arg wp "443" --arg uuid "$uuid" --arg domain "$domain" --arg path "$path" --arg cert "$CERT_DIR/ws.pem" --arg key "$CERT_DIR/ws.key" \
+    '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"ws-in","listen":"0.0.0.0","listen_port":($wp|tonumber),"users":[{"uuid":$uuid}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key},"transport":{"type":"ws","path":$path}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
+
+    echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"8443\"\nHY_SNI=\"$domain\"\nWS_UUID=\"$uuid\"\nWS_PORT=\"443\"\nWS_DOMAIN=\"$domain\"\nWS_PATH=\"$path\"" > "$DB_FILE"
+}
+
+# --- 菜单界面 ---
 main_menu() {
     clear
     echo "1. 安装 Hysteria2 + Reality"
@@ -127,8 +130,15 @@ main_menu() {
     echo "0. 退出"
     read -p "选择: " opt
     case $opt in
-        1|2|3) install_deps; enable_bbr; install_core; generate_config "all"; systemctl restart sing-box 2>/dev/null || {
-            cat > /etc/systemd/system/sing-box.service <<EOF
+        1|2|3) install_deps; enable_bbr; install_core; generate_config "all" ;;
+        4|5) install_deps; enable_bbr; install_core; generate_hy2_ws ;;
+        6) show_info; exit 0 ;;
+        7) journalctl -u sing-box -f ;;
+        8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "已卸载"; exit 0 ;;
+        *) exit 0 ;;
+    esac
+
+    cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box
 After=network.target
@@ -138,14 +148,8 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
-            systemctl daemon-reload && systemctl enable --now sing-box
-        }; show_info ;;
-        4|5) install_deps; enable_bbr; install_core; generate_hy2_ws; systemctl restart sing-box; show_info ;;
-        6) show_info ;;
-        7) journalctl -u sing-box -f ;;
-        8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "已卸载" ;;
-        *) exit 0 ;;
-    esac
+    systemctl daemon-reload && systemctl enable --now sing-box
+    show_info
 }
 
 main_menu
