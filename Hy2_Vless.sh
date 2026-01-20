@@ -142,28 +142,29 @@ generate_hy2_and_vless_ws() {
     open_ports "$hy_port/udp" "$ws_port/tcp" "80/tcp"
     systemctl stop nginx apache2 httpd 2>/dev/null || true
 
-    # 证书环境初始化
+    # --- 证书环境初始化 (强制重置旧账户) ---
     if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
-        curl -s https://get.acme.sh | sh -s email=admin@$ws_domain >/dev/null
+        curl -s https://get.acme.sh | sh -s email=admin@${ws_domain} >/dev/null
     fi
     
-    # 【关键修复】：注册有效的账号邮箱，避免 Let's Encrypt 拒绝
-    ~/.acme.sh/acme.sh --register-account -m cert-admin@$ws_domain --server letsencrypt
+    # 彻底清理旧的 CA 注册信息，解决 forbidden domain "example.com" 报错
+    rm -rf ~/.acme.sh/ca
+    ~/.acme.sh/acme.sh --register-account -m "admin@${ws_domain}" --server letsencrypt --force
 
-    # Hy2 证书
+    # Hy2 证书 (保持自签名)
     openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
     openssl req -new -x509 -days 3650 -nodes -key "$CERT_DIR/hy2.key" -out "$CERT_DIR/hy2.pem" -subj "/CN=$hy_sni" >/dev/null 2>&1
     local hy_pass=$(openssl rand -hex 16)
 
-    # WS 证书申请 (强制使用 Let's Encrypt)
+    # WS 证书申请 (强制使用 Let's Encrypt 并显式传递邮箱)
     local ws_cert=""
     local ws_key=""
     info "正在向 Let's Encrypt 申请正式证书..."
-    if ~/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --server letsencrypt --force; then
+    if ~/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --server letsencrypt --force --accountemail "admin@${ws_domain}"; then
         ~/.acme.sh/acme.sh --install-cert -d "$ws_domain" --cert-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key" --fullchain-file "$CERT_DIR/ws-fullchain.pem"
         ws_cert="$CERT_DIR/ws-fullchain.pem"
         ws_key="$CERT_DIR/ws.key"
-        success "证书申请成功！"
+        success "正式证书申请成功！"
     else
         warn "申请失败，切换自签名 (请在客户端开启'允许不安全连接')"
         openssl req -new -x509 -days 365 -nodes -subj "/CN=$ws_domain" -out "$CERT_DIR/ws.pem" -keyout "$CERT_DIR/ws.key" >/dev/null 2>&1
@@ -173,14 +174,18 @@ generate_hy2_and_vless_ws() {
 
     local ws_uuid=$($SINGBOX_BIN generate uuid)
     local ws_path="/$(openssl rand -hex 6)"
+    
+    # 生成 Inbound 配置
     local hy_in=$(jq -n --arg port "$hy_port" --arg pass "$hy_pass" --arg cert "$CERT_DIR/hy2.pem" --arg key "$CERT_DIR/hy2.key" \
         '{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}}')
     local ws_in=$(jq -n --arg port "$ws_port" --arg uuid "$ws_uuid" --arg cert "$ws_cert" --arg key "$ws_key" --arg domain "$ws_domain" --arg path "$ws_path" \
         '{"type":"vless","tag":"vless-ws-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"uuid":$uuid}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key},"transport":{"type":"ws","path":$path,"headers":{"Host":$domain}}}')
 
+    # 写入配置文件
     jq -n --argjson hy "$hy_in" --argjson ws "$ws_in" '{"log":{"level":"info"},"inbounds":[$hy, $ws],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
+    
+    # 保存数据用于显示
     echo -e "MODE=\"hy2+vless-ws\"\nIP=\"$(curl -s https://api.ipify.org)\"\nHY_PORT=\"$hy_port\"\nHY_PASS=\"$hy_pass\"\nHY_SNI=\"$hy_sni\"\nWS_PORT=\"$ws_port\"\nWS_UUID=\"$ws_uuid\"\nWS_DOMAIN=\"$ws_domain\"\nWS_PATH=\"$ws_path\"" > "$DB_FILE"
-}
 
 # --- 7. 服务部署与菜单 ---
 setup_service() {
