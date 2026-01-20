@@ -184,10 +184,24 @@ SBEOF
             show_info
             ;;
         4|5)
-            install_deps; enable_bbr; install_core; generate_hy2_ws
-            systemctl restart sing-box
-            show_info
-            ;;
+    install_deps; enable_bbr; install_core; generate_hy2_ws
+    systemctl restart sing-box 2>/dev/null || {
+        cat > /etc/systemd/system/sing-box.service <<SBEOF
+[Unit]
+Description=sing-box
+After=network.target
+[Service]
+ExecStart=$SINGBOX_BIN run -c $CONF_FILE
+Restart=always
+User=root
+[Install]
+WantedBy=multi-user.target
+SBEOF
+        systemctl daemon-reload
+        systemctl enable --now sing-box
+    }
+    show_info
+    ;;
         6) show_info ;;
         7) journalctl -u sing-box -f ;;
         8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "卸载完成" ;;
