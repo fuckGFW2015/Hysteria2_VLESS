@@ -114,16 +114,16 @@ generate_hy2_ws() {
     if [ ! -d "$HOME/.acme.sh" ]; then
         curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
     fi
-    ~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
+    ～/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
 
     info "正在申请证书（域名: $domain，邮箱: $EMAIL）..."
-    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force --server letsencrypt; then
+    if ! ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force --server letsencrypt; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙/安全组已开放 80 端口
   3. 无其他程序占用 80 端口"
     fi
-    if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+    if ! ～/.acme.sh/acme.sh --install-cert -d "$domain" \
         --fullchain-file "$CERT_DIR/ws.pem" \
         --key-file "$CERT_DIR/ws.key" \
         --server letsencrypt; then
@@ -169,13 +169,14 @@ main_menu() {
         1|2|3)
             install_deps; enable_bbr; install_core; generate_config
             systemctl restart sing-box 2>/dev/null || {
-                cat > /etc/systemd/system/sing-box.service <<SBEOF
+                cat > /etc/systemd/system/sing-box.service <<'SBEOF'
 [Unit]
 Description=sing-box
 After=network.target
 [Service]
-ExecStart=$SINGBOX_BIN run -c $CONF_FILE
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=always
+User=root
 [Install]
 WantedBy=multi-user.target
 SBEOF
@@ -184,24 +185,23 @@ SBEOF
             show_info
             ;;
         4|5)
-    install_deps; enable_bbr; install_core; generate_hy2_ws
-    systemctl restart sing-box 2>/dev/null || {
-        cat > /etc/systemd/system/sing-box.service <<SBEOF
+            install_deps; enable_bbr; install_core; generate_hy2_ws
+            systemctl restart sing-box 2>/dev/null || {
+                cat > /etc/systemd/system/sing-box.service <<'SBEOF'
 [Unit]
 Description=sing-box
 After=network.target
 [Service]
-ExecStart=$SINGBOX_BIN run -c $CONF_FILE
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=always
 User=root
 [Install]
 WantedBy=multi-user.target
 SBEOF
-        systemctl daemon-reload
-        systemctl enable --now sing-box
-    }
-    show_info
-    ;;
+                systemctl daemon-reload && systemctl enable --now sing-box
+            }
+            show_info
+            ;;
         6) show_info ;;
         7) journalctl -u sing-box -f ;;
         8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "卸载完成" ;;
