@@ -162,7 +162,7 @@ generate_hy2_ws() {
         curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
     fi
 
-    if ! ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙已开放 80 端口
