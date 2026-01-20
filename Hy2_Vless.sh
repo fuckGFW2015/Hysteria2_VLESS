@@ -16,17 +16,18 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 核心辅助函数 (定义在最前，防止 command not found) ---
+# --- 核心辅助函数 (必须定义在最前) ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# --- 基础环境 ---
+# --- 基础环境安装 ---
 install_deps() {
     info "安装必要依赖..."
     local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
     if command -v apt &>/dev/null; then
+        export DEBIAN_FRONTEND=noninteractive
         apt update && apt install -y "${deps[@]}"
     elif command -v dnf &>/dev/null; then
         dnf install -y epel-release && dnf install -y "${deps[@]}"
@@ -34,17 +35,18 @@ install_deps() {
 }
 
 enable_bbr() {
-    info "开启 BBR 加速..."
+    info "检测并开启 BBR..."
     if ! sysctl net.ipv4.tcp_congestion_control | grep -q 'bbr'; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
         sysctl -p >/dev/null 2>&1
     fi
+    success "BBR 已就绪"
 }
 
 install_core() {
     if [[ ! -x "$SINGBOX_BIN" ]]; then
-        info "下载 Sing-box 核心..."
+        info "安装 Sing-box 核心..."
         TAG=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r 'map(select(.prerelease == true)) | first | .tag_name')
         VERSION=${TAG#v}
         wget -qO- "https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
@@ -54,7 +56,7 @@ install_core() {
     mkdir -p "$CONF_DIR" "$CERT_DIR"
 }
 
-# --- 信息展示与二维码 ---
+# --- 展示信息与二维码 (修复后的函数) ---
 show_info() {
     [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录"; return; }
     source "$DB_FILE"
@@ -62,17 +64,17 @@ show_info() {
     if [[ "$MODE" == "hy2_ws" ]]; then
         local l1="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI#Hy2"
         local l2="vless://$WS_UUID@$IP:$WS_PORT?encryption=none&security=tls&type=ws&host=$WS_DOMAIN&path=$WS_PATH#VLESS-WS"
-        echo -e "Hy2: $l1\nWS: $l2"
-        qrencode -t ansiutf8 "$l1"; qrencode -t ansiutf8 "$l2"
+        echo -e "Hysteria2: $l1\n" && qrencode -t ansiutf8 "$l1"
+        echo -e "\nVLESS-WS: $l2\n" && qrencode -t ansiutf8 "$l2"
     else
         local l1="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$SNI#Hy2"
         local l2="vless://$REL_UUID@$IP:$REL_PORT?security=reality&sni=$SNI&fp=chrome&pbk=$REL_PUB&sid=$REL_SID&flow=xtls-rprx-vision&type=tcp#Reality"
-        echo -e "Hy2: $l1\nReality: $l2"
-        qrencode -t ansiutf8 "$l1"; qrencode -t ansiutf8 "$l2"
+        echo -e "Hysteria2: $l1\n" && qrencode -t ansiutf8 "$l1"
+        echo -e "\nReality: $l2\n" && qrencode -t ansiutf8 "$l2"
     fi
 }
 
-# --- 功能逻辑 ---
+# --- 配置生成逻辑 ---
 generate_config() {
     local mode=$1
     read -p "伪装域名 (SNI) [www.bing.com]: " sni; sni=${sni:-"www.bing.com"}
@@ -97,14 +99,14 @@ generate_config() {
 }
 
 generate_hy2_ws() {
-    read -p "请输入解析好的域名: " domain
+    read -p "解析好的域名: " domain
     [[ -z "$domain" ]] && error "域名不能为空"
     local ip=$(curl -s https://api.ipify.org)
     local uuid=$($SINGBOX_BIN generate uuid)
     local path="/$(openssl rand -hex 6)"
     local pass=$(openssl rand -hex 12)
 
-    info "证书申请中..."
+    info "正在申请证书 (请确保80端口未被占用)..."
     if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
     ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
     ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
@@ -118,6 +120,9 @@ generate_hy2_ws() {
 # --- 菜单界面 ---
 main_menu() {
     clear
+    echo -e "${CYAN}====================================${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (官方修复版)  ${NC}"
+    echo -e "${CYAN}====================================${NC}"
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
     echo "3. 单独安装 Reality (VLESS)"
@@ -134,7 +139,7 @@ main_menu() {
         4|5) install_deps; enable_bbr; install_core; generate_hy2_ws ;;
         6) show_info; exit 0 ;;
         7) journalctl -u sing-box -f ;;
-        8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "已卸载"; exit 0 ;;
+        8) systemctl disable --now sing-box; rm -rf "$CONF_DIR" "$SINGBOX_BIN"; success "卸载完成"; exit 0 ;;
         *) exit 0 ;;
     esac
 
