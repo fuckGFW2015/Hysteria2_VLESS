@@ -238,9 +238,11 @@ main_menu() {
         7) journalctl -u sing-box -f -n 50 ;;
         8) systemctl disable --now sing-box; rm -rf "$SINGBOX_BIN" "$CONF_DIR";;
         *) exit ;;
+ # ... 以上是 main_menu 函数定义 ...
     esac
 }
 
+# 脚本执行入口
 [[ "$(id -u)" -ne 0 ]] && error "请用 root 运行"
 main_menu
-}
+# 这里后面不应该再有任何 } 符号
