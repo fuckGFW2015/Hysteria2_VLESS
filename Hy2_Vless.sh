@@ -159,10 +159,18 @@ generate_hy2_ws() {
 
     info "正在通过 acme.sh 申请正式证书（需临时开放 80 端口）..."
     if [ ! -d "$HOME/.acme.sh" ]; then
-        curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
-    fi
+    curl -s https://get.acme.sh | sh || error "acme.sh 安装失败"
+fi
 
-    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+# 设置有效邮箱（关键！）
+EMAIL="admin@$(echo "$domain" | sed 's/^[^.]*\.//')"  # 自动生成 admin@yourdomain.com
+# 或者你可以提示用户输入：
+# read -p "请输入用于证书申请的邮箱 (如: user@gmail.com): " EMAIL
+# [[ -z "$EMAIL" ]] && error "邮箱不能为空"
+
+～/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
+
+if ! ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙已开放 80 端口
