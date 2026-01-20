@@ -46,67 +46,60 @@ enable_bbr() {
 # --- 1. 环境准备与依赖安装 ---
 install_deps() {
     info "检查并安装必要依赖..."
-    local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat")
+    # 增加了 iptables-persistent 确保规则重启不失效
+    local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
     if command -v apt &>/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
+        echo iptables-persistent select true | debconf-set-selections
         apt update && apt install -y "${deps[@]}"
     elif command -v dnf &>/dev/null; then
-        dnf install -y "${deps[@]}"
+        dnf install -y epel-release && dnf install -y "${deps[@]}"
     elif command -v yum &>/dev/null; then
         yum install -y epel-release && yum install -y "${deps[@]}"
     fi
 }
 
-# --- 2. 自动放行防火墙 ---
+# --- 2. 自动放行防火墙 (已修复冲突逻辑) ---
 open_ports() {
-    info "配置系统防火墙策略..."
-    local handled=false
-    local p
+    info "正在优化防火墙策略以解决冲突..."
+    
+    # === 关键修复 1：重置所有底层策略为接受 ===
+    if command -v iptables &>/dev/null; then
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+        iptables -F # 清空旧规则，防止 DROP 规则残留
+    fi
 
-    # === 第一步：处理 TCP 端口（所有防火墙后端）===
+    # === 关键修复 2：不再使用 elif，确保所有防火墙工具都同步放行 ===
     for p in "$@"; do
-        if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-            ufw allow "$p"/tcp >/dev/null 2>&1
-            echo -e "  - UFW 已放行端口: $p (TCP)"
-            handled=true
-        elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
-            firewall-cmd --permanent --add-port="$p"/tcp >/dev/null 2>&1
-            firewall-cmd --reload >/dev/null 2>&1
-            echo -e "  - Firewalld 已放行端口: $p (TCP)"
-            handled=true
+        local port_num=$p
+        local proto="tcp"
+        # 如果参数包含协议（如 8443/udp），则解析它
+        if [[ "$p" == *"/"* ]]; then
+            port_num=${p%/*}
+            proto=${p##*/}
         fi
+
+        # 放行 UFW
+        if command -v ufw &>/dev/null; then
+            ufw allow "$port_num"/"$proto" >/dev/null 2>&1
+        fi
+
+        # 放行 Firewalld
+        if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
+            firewall-cmd --permanent --add-port="$port_num"/"$proto" >/dev/null 2>&1
+            firewall-cmd --reload >/dev/null 2>&1
+        fi
+
+        # 放行 iptables (作为最底层保障)
+        iptables -I INPUT -p "$proto" --dport "$port_num" -j ACCEPT 2>/dev/null
+        echo -e "  - 内部防火墙已放行端口: $port_num ($proto)"
     done
 
-    # === 第二步：如果没被高级防火墙处理，则用 iptables 处理 TCP + HY2 UDP ===
-    if ! $handled; then
-        # 放行所有传入的 TCP 端口
-        for p in "$@"; do
-            if ! iptables -C INPUT -p tcp --dport "$p" -j ACCEPT >/dev/null 2>&1; then
-                iptables -I INPUT -p tcp --dport "$p" -j ACCEPT
-                echo -e "  - iptables 已放行端口: $p (TCP)"
-            fi
-        done
-
-        # 单独放行 Hysteria2 的 UDP 端口（仅当 HY_PORT 有值）
-        for p in "$@"; do
-            if [[ "$p" == *"udp"* ]]; then
-                port_num=${p%/*}
-                proto=${p##*/}
-                if [[ "$proto" == "udp" ]] && ! iptables -C INPUT -p udp --dport "$port_num" -j ACCEPT >/dev/null 2>&1; then
-                    iptables -I INPUT -p udp --dport "$port_num" -j ACCEPT
-                    echo -e "  - iptables 已放行端口: $port_num (UDP)"
-                fi
-            fi
-        done
-
-        # 保存 iptables 规则
-        if command -v iptables-save &>/dev/null; then
-            if command -v apt &>/dev/null; then
-                apt install -y iptables-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1
-            elif command -v dnf &>/dev/null; then
-                dnf install -y iptables-services >/dev/null 2>&1 && service iptables save >/dev/null 2>&1
-            fi
-        fi
+    # === 关键修复 3：持久化保存规则 ===
+    if command -v netfilter-persistent &>/dev/null; then
+        netfilter-persistent save >/dev/null 2>&1
     fi
 }
 
@@ -153,9 +146,10 @@ generate_config() {
     read -p "Hysteria2 端口 (默认8443): " hy2_port; hy2_port=${hy2_port:-8443}
     read -p "Reality 端口 (默认443): " rel_port; rel_port=${rel_port:-443}
     
-    [[ "$mode" == "all" ]] && open_ports "$hy2_port" "$rel_port"
-    [[ "$mode" == "hy2" ]] && open_ports "$hy2_port"
-    [[ "$mode" == "reality" ]] && open_ports "$rel_port"
+    # 这里保持原样调用
+    [[ "$mode" == "all" ]] && open_ports "$hy2_port/udp" "$rel_port/tcp"
+    [[ "$mode" == "hy2" ]] && open_ports "$hy2_port/udp"
+    [[ "$mode" == "reality" ]] && open_ports "$rel_port/tcp"
 
     [[ ! -x "$SINGBOX_BIN" ]] && error "Sing-box 未安装"
 
@@ -205,7 +199,7 @@ generate_vless_ws_tls() {
     else
         info "正在尝试自动申请 Let's Encrypt 证书..."
         install_deps
-        open_ports 80
+        open_ports 80/tcp
 
         # 停止占用 80 的服务
         systemctl stop nginx apache2 httpd 2>/dev/null || true
@@ -233,7 +227,7 @@ generate_vless_ws_tls() {
         fi
     fi
 
-    open_ports "$port"
+    open_ports "$port/tcp"
     local uuid=$($SINGBOX_BIN generate uuid)
     local ip=$(curl -s https://api.ipify.org)
     local ws_path="/$(openssl rand -hex 6)"
@@ -270,9 +264,8 @@ generate_vless_ws_tls() {
     success "VLESS + WS + TLS 配置生成成功（域名: $domain）"
 }
 
-# --- 6. 新增：一键安装 Hysteria2 + VLESS-WS ---
+# --- 6. 一键安装 Hysteria2 + VLESS-WS ---
 generate_hy2_and_vless_ws() {
-    # === 第一步：收集参数 ===
     read -p "请输入 Hysteria2 的伪装域名 (SNI, 默认 www.cloudflare.com): " hy_sni
     hy_sni=${hy_sni:-"www.cloudflare.com"}
     
@@ -285,16 +278,9 @@ generate_hy2_and_vless_ws() {
     read -p "VLESS-WS 端口 (默认 443): " ws_port
     ws_port=${ws_port:-443}
 
-    # === 第二步：放行端口（显式指定协议）===
-    open_ports "$hy_port" "$ws_port"
+    # 修改此处以匹配修复后的 open_ports
+    open_ports "$hy_port/udp" "$ws_port/tcp" "80/tcp"
 
-    # 手动放行 UDP（因 open_ports 可能未处理纯数字的 UDP）
-    if ! iptables -C INPUT -p udp --dport "$hy_port" -j ACCEPT >/dev/null 2>&1; then
-        iptables -I INPUT -p udp --dport "$hy_port" -j ACCEPT
-        echo -e "  - 手动放行 Hysteria2 UDP 端口: $hy_port"
-    fi
-
-    # === 第三步：生成 Hysteria2 自签名证书 ===
     info "生成 Hysteria2 自签名证书..."
     mkdir -p "$CERT_DIR"
     openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/hy2.key"
@@ -312,7 +298,7 @@ generate_hy2_and_vless_ws() {
             "tag": "hy2-in",
             "listen": "0.0.0.0",
             "listen_port": ($port | tonumber),
-            "users": [{"password": $pass}],
+            "users": [{"password": $hy_pass}],
             "tls": {
                 "enabled": true,
                 "certificate_path": $cert,
@@ -320,7 +306,6 @@ generate_hy2_and_vless_ws() {
             }
         }')
 
-    # === 第四步：生成 VLESS-WS ===
     info "配置 VLESS-WS + TLS..."
     local use_cert_input=""
     read -p "是否使用现有证书？(y/n，默认 n): " use_cert_input
@@ -331,7 +316,6 @@ generate_hy2_and_vless_ws() {
         [[ ! -f "$ws_key" ]] && error "私钥不存在: $ws_key"
     else
         install_deps
-        open_ports 80
         systemctl stop nginx apache2 httpd 2>/dev/null || true
 
         if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
@@ -383,7 +367,6 @@ generate_hy2_and_vless_ws() {
             }
         }')
 
-    # === 第五步：合并配置 ===
     jq -n \
         --argjson hy "$hy_in" \
         --argjson ws "$ws_in" \
@@ -393,15 +376,16 @@ generate_hy2_and_vless_ws() {
             "outbounds": [{"type": "direct", "tag": "direct"}]
         }' > "$CONF_FILE"
 
-    # === 第六步：保存数据 ===
     local ip=$(curl -s https://api.ipify.org)
     echo -e "MODE=\"hy2+vless-ws\"\nIP=\"$ip\"\nHY_PORT=\"$hy_port\"\nHY_PASS=\"$hy_pass\"\nHY_SNI=\"$hy_sni\"\nWS_PORT=\"$ws_port\"\nWS_UUID=\"$ws_uuid\"\nWS_DOMAIN=\"$ws_domain\"\nWS_PATH=\"$ws_path\"\nWS_CERT=\"$ws_cert\"\nWS_KEY=\"$ws_key\"" > "$DB_FILE"
-
     success "Hysteria2 + VLESS-WS 配置生成成功！"
 }
 
 # --- 7. 服务部署 ---
 setup_service() {
+    if ! $SINGBOX_BIN check -c "$CONF_FILE" >/dev/null 2>&1; then
+        error "配置文件无效，请检查日志"
+    fi
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=Sing-Box Service
@@ -421,7 +405,7 @@ EOF
     success "服务已启动"
 }
 
-# --- 8. 显示信息 ---
+# --- 8. 显示信息 (保持现状) ---
 show_info() {
     [[ ! -f "$DB_FILE" ]] && { warn "未找到记录"; return; }
     MODE=$(grep '^MODE=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
@@ -456,35 +440,19 @@ show_info() {
     echo -e "\n${YELLOW}⚠️  请确保云服务器安全组已放行相应端口${NC}"
 }
 
-# --- 9. 显示 VLESS-WS 信息 ---
 show_vless_ws_info() {
     IP=$(grep '^IP=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     PORT=$(grep '^PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     UUID=$(grep '^UUID=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     DOMAIN=$(grep '^DOMAIN=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     ws_path=$(grep '^PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
-
     echo -e "\n${GREEN}======= VLESS + WS + TLS =======${NC}"
     local link="vless://${UUID}@${IP}:${PORT}?encryption=none&security=tls&type=ws&host=${DOMAIN}&path=${ws_path}&fp=chrome#VLESS-WS"
     echo -e "链接: $link"
-
-    if command -v qrencode &>/dev/null; then
-        echo -e "\n${BLUE}[二维码]${NC}"
-        echo "$link" | qrencode -t UTF8
-    else
-        echo -e "\n${YELLOW}⚠️  提示：未安装 qrencode，无法显示二维码。${NC}"
-        echo -e "${YELLOW}   运行 'apt install -y qrencode' 后重试。${NC}"
-    fi
-
-    echo -e "\n${YELLOW}⚠️  注意：\n- 域名 ${DOMAIN} 必须解析到 ${IP}\n- 安全组需放行 ${PORT}/TCP\n- 生产环境建议使用有效证书${NC}"
+    echo "$link" | qrencode -t UTF8
 }
 
-# --- 10. 显示 Hysteria2 + VLESS-WS 信息 ---
 show_hy2_and_vless_info() {
-    [[ ! -f "$DB_FILE" ]] && { warn "未找到记录"; return; }
-    MODE=$(grep '^MODE=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
-    [[ "$MODE" != "hy2+vless-ws" ]] && return
-
     IP=$(grep '^IP=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     HY_PORT=$(grep '^HY_PORT=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     HY_PASS=$(grep '^HY_PASS=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
@@ -493,26 +461,13 @@ show_hy2_and_vless_info() {
     WS_UUID=$(grep '^WS_UUID=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     WS_DOMAIN=$(grep '^WS_DOMAIN=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
     WS_PATH=$(grep '^WS_PATH=' "$DB_FILE" | cut -d'=' -f2 | tr -d '"')
-
     echo -e "\n${GREEN}======= Hysteria2 + VLESS-WS 共存配置 =======${NC}"
-
-    # Hysteria2 链接
     local hy_link="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI&alpn=h3#Hy2-VPS"
     echo -e "【Hysteria2】\n$hy_link"
-    if command -v qrencode &>/dev/null; then
-        echo "$hy_link" | qrencode -t UTF8
-    fi
-
-    echo -e "\n${GREEN}----------------------------------------${NC}"
-
-    # VLESS-WS 链接
+    echo "$hy_link" | qrencode -t UTF8
     local ws_link="vless://${WS_UUID}@${IP}:${WS_PORT}?encryption=none&security=tls&type=ws&host=${WS_DOMAIN}&path=${WS_PATH}&fp=chrome#VLESS-WS"
-    echo -e "【VLESS-WS】\n$ws_link"
-    if command -v qrencode &>/dev/null; then
-        echo "$ws_link" | qrencode -t UTF8
-    fi
-
-    echo -e "\n${YELLOW}⚠️  注意：\n- HY2 使用 SNI: $HY_SNI\n- VLESS-WS 域名: $WS_DOMAIN 必须解析到 $IP\n- 安全组需放行 $HY_PORT/UDP 和 $WS_PORT/TCP${NC}"
+    echo -e "\n【VLESS-WS】\n$ws_link"
+    echo "$ws_link" | qrencode -t UTF8
 }
 
 # --- 主菜单 ---
