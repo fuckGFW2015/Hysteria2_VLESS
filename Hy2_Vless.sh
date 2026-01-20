@@ -168,9 +168,9 @@ EMAIL="admin@$(echo "$domain" | sed 's/^[^.]*\.//')"  # 自动生成 admin@yourd
 # read -p "请输入用于证书申请的邮箱 (如: user@gmail.com): " EMAIL
 # [[ -z "$EMAIL" ]] && error "邮箱不能为空"
 
-～/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
+~/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt >/dev/null 2>&1
 
-if ! ～/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
+if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force; then
         error "证书申请失败！请确保：
   1. 域名已正确解析到本机 IP
   2. 防火墙已开放 80 端口
