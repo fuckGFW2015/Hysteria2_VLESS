@@ -1,14 +1,14 @@
-cat << 'EOF' > Hy2_Vless_Final.sh
+cat << 'EOF' > Hy2_Vless_Fix.sh
 #!/bin/bash
 
-# --- 路徑與常量配置 ---
+# --- 路径与常量配置 ---
 SINGBOX_BIN="/usr/local/bin/sing-box"
 CONF_DIR="/etc/sing-box"
 CONF_FILE="${CONF_DIR}/config.json"
 CERT_DIR="${CONF_DIR}/certs"
 DB_FILE="${CONF_DIR}/.script_data.db"
 
-# 顏色定義
+# 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -16,28 +16,28 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 核心輔助函數 ---
+# --- 核心辅助函数 ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# --- 啟用 BBR 加速 ---
+# --- 启用 BBR 加速 ---
 enable_bbr() {
-    info "正在檢測並啟用 BBR 加速..."
+    info "正在检测并启用 BBR 加速..."
     if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q 'bbr'; then
-        success "BBR 已啟用"
+        success "BBR 已启用"
         return
     fi
     echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
     echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
-    success "BBR 已開啟"
+    success "BBR 已开启"
 }
 
-# --- 1. 環境準備與依賴安裝 ---
+# --- 1. 环境准备与依赖安装 ---
 install_deps() {
-    info "檢查並安裝必要依賴..."
+    info "检查并安装必要依赖..."
     local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
     if command -v apt &>/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
@@ -50,9 +50,9 @@ install_deps() {
     fi
 }
 
-# --- 2. 自動放行防火牆 ---
+# --- 2. 自动放行防火墙 ---
 open_ports() {
-    info "配置系統防火牆策略..."
+    info "配置系统防火墙策略..."
     if command -v iptables &>/dev/null; then
         iptables -P INPUT ACCEPT
         iptables -F
@@ -66,12 +66,12 @@ open_ports() {
     [[ -x "$(command -v netfilter-persistent)" ]] && netfilter-persistent save >/dev/null 2>&1
 }
 
-# --- 3. 安裝核心 ---
+# --- 3. 安装核心 ---
 install_core() {
     [[ -x "$SINGBOX_BIN" ]] && return
-    info "獲取 Sing-box 核心..."
+    info "获取 Sing-box 核心..."
     TAG=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r 'map(select(.prerelease == true)) | first | .tag_name // empty')
-    [[ -z "$TAG" ]] && error "獲取版本失敗"
+    [[ -z "$TAG" ]] && TAG="v1.8.0-rc.1"
     VERSION=${TAG#v}
     URL="https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VERSION}-linux-amd64.tar.gz"
     wget -qO- "$URL" | tar -xz -C /tmp
@@ -83,9 +83,9 @@ install_core() {
 # --- 4. 配置生成 (Reality/Hy2) ---
 generate_config() {
     local mode=$1
-    read -p "請輸入偽裝域名 (SNI): " sni_domain; sni_domain=${sni_domain:-"www.cloudflare.com"}
-    read -p "Hysteria2 端口 (默認8443): " hy2_port; hy2_port=${hy2_port:-8443}
-    read -p "Reality 端口 (默認443): " rel_port; rel_port=${rel_port:-443}
+    read -p "请输入伪装域名 (SNI): " sni_domain; sni_domain=${sni_domain:-"www.cloudflare.com"}
+    read -p "Hysteria2 端口 (默认8443): " hy2_port; hy2_port=${hy2_port:-8443}
+    read -p "Reality 端口 (默认443): " rel_port; rel_port=${rel_port:-443}
     
     [[ "$mode" == "all" ]] && open_ports "$hy2_port/udp" "$rel_port/tcp"
     [[ "$mode" == "hy2" ]] && open_ports "$hy2_port/udp"
@@ -111,16 +111,17 @@ generate_config() {
         '{"type":"vless","tag":"vless-in","listen":"0.0.0.0","listen_port":($port|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}')
     fi
     jq -n --argjson hy2 "$hy2_in" --argjson rel "$rel_in" '{"log":{"level":"info"},"inbounds":([$hy2, $rel]|map(select(.!=null))),"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
-    echo -e "MODE=\"reality_hy2\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy2_port\"\nSNI=\"$sni_domain\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_port\"\nREL_PK=\"$pk\"\nREL_SID=\"$sid\"" > "$DB_FILE"
+    
+    echo -e "MODE=\"reality_hy2\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy2_port\"\nSNI=\"$sni_domain\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_port\"\nREL_PK=\"$pk\"\nREL_SID=\"$sid\"\nREL_PUB=\"$pub\"" > "$DB_FILE"
 }
 
-# --- 5. Hy2 + VLESS-WS (修復版) ---
+# --- 5. Hy2 + VLESS-WS (修复逻辑) ---
 generate_hy2_and_vless_ws() {
-    read -p "Hy2 SNI (默認 www.bing.com): " hy_sni; hy_sni=${hy_sni:-"www.bing.com"}
-    read -p "Hy2 端口 (默認 8443): " hy_port; hy_port=${hy_port:-8443}
+    read -p "Hy2 SNI (默认 www.bing.com): " hy_sni; hy_sni=${hy_sni:-"www.bing.com"}
+    read -p "Hy2 端口 (默认 8443): " hy_port; hy_port=${hy_port:-8443}
     read -p "VLESS-WS 域名: " ws_domain
-    [[ -z "$ws_domain" ]] && error "域名不能為空"
-    read -p "VLESS-WS 端口 (默認 443): " ws_port; ws_port=${ws_port:-443}
+    [[ -z "$ws_domain" ]] && error "域名不能为空"
+    read -p "VLESS-WS 端口 (默认 443): " ws_port; ws_port=${ws_port:-443}
 
     open_ports "$hy_port/udp" "$ws_port/tcp" "80/tcp"
     systemctl stop nginx apache2 httpd 2>/dev/null || true
@@ -137,13 +138,13 @@ generate_hy2_and_vless_ws() {
 
     local ws_cert=""
     local ws_key=""
-    info "正在向 Let's Encrypt 申請正式證書..."
-    if ~/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --server letsencrypt --force --accountemail "admin@${ws_domain}"; then
+    info "正在向 Let's Encrypt 申请正式证书..."
+    if ~/.acme.sh/acme.sh --issue -d "$ws_domain" --standalone --server letsencrypt --force; then
         ~/.acme.sh/acme.sh --install-cert -d "$ws_domain" --cert-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key" --fullchain-file "$CERT_DIR/ws-fullchain.pem"
         ws_cert="$CERT_DIR/ws-fullchain.pem"; ws_key="$CERT_DIR/ws.key"
-        success "證書申請成功！"
+        success "证书申请成功！"
     else
-        warn "申請失敗，切換自簽名"
+        warn "申请失败，切换自签名"
         openssl req -new -x509 -days 365 -nodes -subj "/CN=$ws_domain" -out "$CERT_DIR/ws.pem" -keyout "$CERT_DIR/ws.key" >/dev/null 2>&1
         ws_cert="$CERT_DIR/ws.pem"; ws_key="$CERT_DIR/ws.key"
     fi
@@ -161,9 +162,9 @@ generate_hy2_and_vless_ws() {
     echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$hy_pass\"\nHY_PORT=\"$hy_port\"\nHY_SNI=\"$hy_sni\"\nWS_UUID=\"$ws_uuid\"\nWS_PORT=\"$ws_port\"\nWS_DOMAIN=\"$ws_domain\"\nWS_PATH=\"$ws_path\"" > "$DB_FILE"
 }
 
-# --- 服務部署 ---
+# --- 部署服务 ---
 setup_service() {
-    $SINGBOX_BIN check -c "$CONF_FILE" || error "配置校驗失敗"
+    $SINGBOX_BIN check -c "$CONF_FILE" || error "配置校验失败"
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=Sing-Box Service
@@ -171,19 +172,18 @@ After=network.target
 [Service]
 ExecStart=$SINGBOX_BIN run -c $CONF_FILE
 Restart=on-failure
-User=root
 [Install]
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable --now sing-box
-    success "Sing-box 運行中"
+    success "Sing-box 运行中"
 }
 
-# --- 6. 查看信息與二維碼 ---
+# --- 6. 查看信息与二维码 ---
 show_info() {
-    [[ ! -f "$DB_FILE" ]] && { warn "未找到配置記錄"; return; }
+    [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录"; return; }
     source "$DB_FILE"
-    echo -e "\n${GREEN}======= 節點鏈接 =======${NC}"
+    echo -e "\n${GREEN}======= 节点链接与二维码 =======${NC}"
     if [[ "$MODE" == "hy2_ws" ]]; then
         local hy2_link="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI#Hy2"
         local ws_link="vless://$WS_UUID@$IP:$WS_PORT?encryption=none&security=tls&type=ws&host=$WS_DOMAIN&path=$WS_PATH#VLESS-WS"
@@ -193,7 +193,7 @@ show_info() {
         qrencode -t ansiutf8 "$ws_link"
     else
         local hy2_link="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$SNI#Hy2"
-        local rel_link="vless://$REL_UUID@$IP:$REL_PORT?security=reality&sni=$SNI&fp=chrome&pbk=$REL_PK&sid=$REL_SID&flow=xtls-rprx-vision&type=tcp#Reality"
+        local rel_link="vless://$REL_UUID@$IP:$REL_PORT?security=reality&sni=$SNI&fp=chrome&pbk=$REL_PUB&sid=$REL_SID&flow=xtls-rprx-vision&type=tcp#Reality"
         echo -e "Hysteria2: ${CYAN}$hy2_link${NC}"
         qrencode -t ansiutf8 "$hy2_link"
         echo -e "\nReality: ${CYAN}$rel_link${NC}"
@@ -201,23 +201,23 @@ show_info() {
     fi
 }
 
-# --- 菜單 ---
+# --- 菜单界面 ---
 main_menu() {
     clear
     echo -e "${CYAN}====================================${NC}"
-    echo -e "${CYAN}   Sing-Box 管理腳本 (完整修復版)   ${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (修复增强版)   ${NC}"
     echo -e "${CYAN}====================================${NC}"
-    echo "1. 安裝 Hysteria2 + Reality"
-    echo "2. 單獨安裝 Hysteria2"
-    echo "3. 單獨安裝 Reality (VLESS)"
-    echo "4. 安裝 VLESS + WebSocket + TLS"
-    echo "5. 安裝 Hysteria2 + VLESS-WS"
+    echo "1. 安装 Hysteria2 + Reality"
+    echo "2. 单独安装 Hysteria2"
+    echo "3. 单独安装 Reality (VLESS)"
+    echo "4. 安装 VLESS + WebSocket + TLS"
+    echo "5. 安装 Hysteria2 + VLESS-WS"
     echo "------------------------------------"
-    echo "6. 查看當前配置/二維碼"
-    echo "7. 查看實時日誌"
-    echo "8. 卸載 Sing-box"
+    echo "6. 查看当前配置/二维码"
+    echo "7. 查看实时日志"
+    echo "8. 卸载 Sing-box"
     echo "0. 退出"
-    read -p "選擇: " opt
+    read -p "选择: " opt
     case $opt in
         1) install_deps; enable_bbr; install_core; generate_config "all"; setup_service; show_info ;;
         2) install_deps; enable_bbr; install_core; generate_config "hy2"; setup_service; show_info ;;
@@ -225,14 +225,14 @@ main_menu() {
         4|5) install_deps; enable_bbr; install_core; generate_hy2_and_vless_ws; setup_service; show_info ;;
         6) show_info ;;
         7) journalctl -u sing-box -f -n 50 ;;
-        8) systemctl disable --now sing-box; rm -rf "$SINGBOX_BIN" "$CONF_DIR"; success "卸載完成" ;;
+        8) systemctl disable --now sing-box; rm -rf "$SINGBOX_BIN" "$CONF_DIR" "$DB_FILE"; success "卸载完成" ;;
         *) exit ;;
     esac
 }
 
-[[ "$(id -u)" -ne 0 ]] && error "請用 root 運行"
+[[ "$(id -u)" -ne 0 ]] && error "请用 root 运行"
 main_menu
 EOF
 
-chmod +x Hy2_Vless_Final.sh
-./Hy2_Vless_Final.sh
+chmod +x Hy2_Vless_Fix.sh
+./Hy2_Vless_Fix.sh
