@@ -1,4 +1,4 @@
-cat << 'EOF' > Hy2_Vless_Fix.sh
+cat << 'EOF' > Hy2_Vless_Official.sh
 #!/bin/bash
 
 # --- 路径与常量配置 ---
@@ -16,18 +16,17 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 核心辅助函数 (必须定义在最前) ---
+# --- 核心辅助函数 (定义在最前，防止 command not found) ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# --- 基础环境安装 ---
+# --- 1. 环境准备 ---
 install_deps() {
-    info "安装必要依赖..."
+    info "正在安装必要依赖 (jq, qrencode, openssl)..."
     local deps=("curl" "wget" "jq" "openssl" "tar" "qrencode" "socat" "iptables-persistent")
     if command -v apt &>/dev/null; then
-        export DEBIAN_FRONTEND=noninteractive
         apt update && apt install -y "${deps[@]}"
     elif command -v dnf &>/dev/null; then
         dnf install -y epel-release && dnf install -y "${deps[@]}"
@@ -35,13 +34,13 @@ install_deps() {
 }
 
 enable_bbr() {
-    info "检测并开启 BBR..."
+    info "检测并启用 BBR 加速..."
     if ! sysctl net.ipv4.tcp_congestion_control | grep -q 'bbr'; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
         sysctl -p >/dev/null 2>&1
     fi
-    success "BBR 已就绪"
+    success "BBR 已启用"
 }
 
 install_core() {
@@ -56,25 +55,30 @@ install_core() {
     mkdir -p "$CONF_DIR" "$CERT_DIR"
 }
 
-# --- 展示信息与二维码 (修复后的函数) ---
+# --- 2. 展示信息与二维码 (位置挪到调用之前) ---
 show_info() {
-    [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录"; return; }
+    [[ ! -f "$DB_FILE" ]] && { warn "未找到配置记录，请先安装节点"; return; }
     source "$DB_FILE"
     echo -e "\n${GREEN}======= 节点链接与二维码 =======${NC}"
+    
     if [[ "$MODE" == "hy2_ws" ]]; then
         local l1="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$HY_SNI#Hy2"
         local l2="vless://$WS_UUID@$IP:$WS_PORT?encryption=none&security=tls&type=ws&host=$WS_DOMAIN&path=$WS_PATH#VLESS-WS"
-        echo -e "Hysteria2: $l1\n" && qrencode -t ansiutf8 "$l1"
-        echo -e "\nVLESS-WS: $l2\n" && qrencode -t ansiutf8 "$l2"
+        echo -e "Hysteria2: ${CYAN}$l1${NC}"
+        qrencode -t ansiutf8 "$l1"
+        echo -e "\nVLESS-WS: ${CYAN}$l2${NC}"
+        qrencode -t ansiutf8 "$l2"
     else
         local l1="hy2://$HY_PASS@$IP:$HY_PORT?insecure=1&sni=$SNI#Hy2"
         local l2="vless://$REL_UUID@$IP:$REL_PORT?security=reality&sni=$SNI&fp=chrome&pbk=$REL_PUB&sid=$REL_SID&flow=xtls-rprx-vision&type=tcp#Reality"
-        echo -e "Hysteria2: $l1\n" && qrencode -t ansiutf8 "$l1"
-        echo -e "\nReality: $l2\n" && qrencode -t ansiutf8 "$l2"
+        echo -e "Hysteria2: ${CYAN}$l1${NC}"
+        qrencode -t ansiutf8 "$l1"
+        echo -e "\nReality: ${CYAN}$l2${NC}"
+        qrencode -t ansiutf8 "$l2"
     fi
 }
 
-# --- 配置生成逻辑 ---
+# --- 3. 配置生成逻辑 ---
 generate_config() {
     local mode=$1
     read -p "伪装域名 (SNI) [www.bing.com]: " sni; sni=${sni:-"www.bing.com"}
@@ -95,18 +99,18 @@ generate_config() {
     jq -n --arg hp "$hy_p" --arg pass "$pass" --arg rp "$rel_p" --arg uuid "$uuid" --arg pk "$pk" --arg sid "$sid" --arg sni "$sni" --arg cert "$CERT_DIR/hy2.pem" --arg key "$CERT_DIR/hy2.key" \
     '{"log":{"level":"info"},"inbounds":[{"type":"hysteria2","tag":"hy2-in","listen":"0.0.0.0","listen_port":($hp|tonumber),"users":[{"password":$pass}],"tls":{"enabled":true,"certificate_path":$cert,"key_path":$key}},{"type":"vless","tag":"vless-in","listen":"0.0.0.0","listen_port":($rp|tonumber),"users":[{"uuid":$uuid,"flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":$sni,"reality":{"enabled":true,"handshake":{"server":$sni,"server_port":443},"private_key":$pk,"short_id":[$sid]}}}],"outbounds":[{"type":"direct"}]}' > "$CONF_FILE"
 
-    echo -e "MODE=\"reality_hy2\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy_p\"\nSNI=\"$sni\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_p\"\nREL_PUB=\"$pub\"\nREL_SID=\"$sid\"" > "$DB_FILE"
+    echo -e "MODE=\"all\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"$hy_p\"\nSNI=\"$sni\"\nREL_UUID=\"$uuid\"\nREL_PORT=\"$rel_p\"\nREL_PUB=\"$pub\"\nREL_SID=\"$sid\"" > "$DB_FILE"
 }
 
 generate_hy2_ws() {
-    read -p "解析好的域名: " domain
+    read -p "请输入已解析的域名: " domain
     [[ -z "$domain" ]] && error "域名不能为空"
     local ip=$(curl -s https://api.ipify.org)
     local uuid=$($SINGBOX_BIN generate uuid)
     local path="/$(openssl rand -hex 6)"
     local pass=$(openssl rand -hex 12)
 
-    info "正在申请证书 (请确保80端口未被占用)..."
+    info "正在通过 acme.sh 申请正式证书..."
     if [ ! -d "$HOME/.acme.sh" ]; then curl -s https://get.acme.sh | sh; fi
     ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
     ~/.acme.sh/acme.sh --install-cert -d "$domain" --fullchain-file "$CERT_DIR/ws.pem" --key-file "$CERT_DIR/ws.key"
@@ -117,11 +121,11 @@ generate_hy2_ws() {
     echo -e "MODE=\"hy2_ws\"\nIP=\"$ip\"\nHY_PASS=\"$pass\"\nHY_PORT=\"8443\"\nHY_SNI=\"$domain\"\nWS_UUID=\"$uuid\"\nWS_PORT=\"443\"\nWS_DOMAIN=\"$domain\"\nWS_PATH=\"$path\"" > "$DB_FILE"
 }
 
-# --- 菜单界面 ---
+# --- 4. 主菜单 (保留 1-8) ---
 main_menu() {
     clear
     echo -e "${CYAN}====================================${NC}"
-    echo -e "${CYAN}   Sing-Box 管理脚本 (官方修复版)  ${NC}"
+    echo -e "${CYAN}   Sing-Box 管理脚本 (修复增强版)   ${NC}"
     echo -e "${CYAN}====================================${NC}"
     echo "1. 安装 Hysteria2 + Reality"
     echo "2. 单独安装 Hysteria2"
@@ -143,9 +147,10 @@ main_menu() {
         *) exit 0 ;;
     esac
 
+    # 自动部署 Systemd
     cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
-Description=sing-box
+Description=sing-box service
 After=network.target
 [Service]
 ExecStart=$SINGBOX_BIN run -c $CONF_FILE
@@ -154,10 +159,11 @@ Restart=always
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable --now sing-box
+    success "Sing-box 已启动"
     show_info
 }
 
 main_menu
 EOF
-chmod +x Hy2_Vless_Fix.sh
-./Hy2_Vless_Fix.sh
+chmod +x Hy2_Vless_Official.sh
+./Hy2_Vless_Official.sh
